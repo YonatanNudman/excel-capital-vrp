@@ -17,8 +17,8 @@ const SETUP_LINK_TTL_HOURS = 72;
 
 /**
  * Generate a fresh, single-use, expiring setup link for a borrower. Only the
- * token hash is stored; the full URL is returned once for staff to share. (Email
- * delivery is wired in a later stage.)
+ * token hash is stored; the full URL is returned once for staff to share, and
+ * emailed to the borrower when a contact address is on file.
  */
 export type SetupLinkState = { url?: string; error?: string; emailed?: boolean } | null;
 

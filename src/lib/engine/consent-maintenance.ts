@@ -24,8 +24,9 @@ async function reconsentAlreadySent(db: D1Database, consentId: string): Promise<
  * Keep consent state honest and give staff early warning:
  *  - consents past their valid_to are marked expired and the borrower flagged
  *    for re-consent (collections will then be blocked by the collect engine).
- *  - consents expiring within the window are audited as "expiring_soon" so a
- *    re-consent can be arranged before a collection fails. (Email wired later.)
+ *  - consents expiring within the window are audited as "expiring_soon" and the
+ *    borrower is emailed a one-time re-consent warning so a new authorisation
+ *    can be arranged before a collection fails.
  */
 export async function runConsentMaintenance(
   db: D1Database,

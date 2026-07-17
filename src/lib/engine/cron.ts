@@ -11,6 +11,8 @@ import { scheduledKey } from "@/lib/idempotency";
 import { buildReference } from "@/lib/reference";
 import { writeAudit } from "@/lib/repo/audit";
 import { runConsentMaintenance } from "@/lib/engine/consent-maintenance";
+import { runAutoRetries } from "@/lib/engine/auto-retry";
+import { getMailer, type Mailer, type MailerEnv } from "@/lib/mailer";
 
 export interface CronSummary {
   date: string;
@@ -36,6 +38,7 @@ export async function runDueCollections(
   plaid: PlaidClient,
   encryptionKey: string,
   today: string,
+  mailer?: Mailer,
 ): Promise<CronSummary> {
   const summary: CronSummary = {
     date: today,
@@ -83,14 +86,20 @@ export async function runDueCollections(
       seq: progress.paymentsMade + 1,
     });
 
-    const outcome = await collectPayment(db, plaid, encryptionKey, {
-      borrowerId: schedule.borrower_id,
-      amountMinor,
-      reference,
-      idempotencyKey: scheduledKey(schedule.borrower_id, schedule.id, dueDate),
-      scheduledFor: dueDate,
-      actorStaffId: null,
-    });
+    const outcome = await collectPayment(
+      db,
+      plaid,
+      encryptionKey,
+      {
+        borrowerId: schedule.borrower_id,
+        amountMinor,
+        reference,
+        idempotencyKey: scheduledKey(schedule.borrower_id, schedule.id, dueDate),
+        scheduledFor: dueDate,
+        actorStaffId: null,
+      },
+      mailer,
+    );
 
     if (outcome.kind === "skipped") {
       // e.g. paused / no consent — leave next_run_date so it retries next pass.
@@ -123,23 +132,42 @@ export async function runDueCollections(
 }
 
 /**
- * Full daily maintenance: expire/flag consents first (so collections against an
- * expired consent are blocked), then run due collections.
+ * Full daily maintenance, in a deliberate order:
+ *  1. Consent maintenance first, so collections against an expired consent are
+ *     blocked and borrowers nearing expiry get their one re-consent warning.
+ *  2. Due collections (with borrower notifications on failure).
+ *  3. Automatic retries of eligible failed payments per the retry policy.
  */
 export async function runDueCollectionsFromEnv(
   env: CloudflareEnv,
   today: string,
-): Promise<CronSummary & { consentExpired: number; consentExpiringSoon: number }> {
-  const maintenance = await runConsentMaintenance(env.DB, new Date(`${today}T06:00:00Z`));
+): Promise<
+  CronSummary & {
+    consentExpired: number;
+    consentExpiringSoon: number;
+    autoRetried: number;
+    autoRetryFailed: number;
+  }
+> {
+  const plaid = getPlaidClient(env);
+  const mailer = getMailer(env as MailerEnv);
+  const now = new Date(`${today}T06:00:00Z`);
+
+  const maintenance = await runConsentMaintenance(env.DB, now, mailer);
   const collections = await runDueCollections(
     env.DB,
-    getPlaidClient(env),
+    plaid,
     env.APP_ENCRYPTION_KEY,
     today,
+    mailer,
   );
+  const retries = await runAutoRetries(env.DB, plaid, env.APP_ENCRYPTION_KEY, now);
+
   return {
     ...collections,
     consentExpired: maintenance.expired,
     consentExpiringSoon: maintenance.expiringSoon,
+    autoRetried: retries.retried,
+    autoRetryFailed: retries.failed,
   };
 }
