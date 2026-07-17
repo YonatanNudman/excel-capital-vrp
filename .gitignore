@@ -45,3 +45,6 @@ npm-debug.log*
 
 # TS build info
 *.tsbuildinfo
+
+# Agent worktrees
+.claude/worktrees/

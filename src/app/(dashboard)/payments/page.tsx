@@ -62,7 +62,15 @@ export default async function PaymentsPage({
 
   return (
     <div>
-      <h1 className="mb-6 text-2xl font-semibold tracking-tight">Payments</h1>
+      <div className="mb-6 flex items-center justify-between">
+        <h1 className="text-2xl font-semibold tracking-tight">Payments</h1>
+        <a
+          href="/api/payments/export"
+          className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-slate-50"
+        >
+          Export CSV
+        </a>
+      </div>
 
       <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
         <ReconCard

@@ -28,3 +28,10 @@ CRON_SECRET=
 ACCESS_TEAM_DOMAIN=
 ACCESS_AUD=
 STAFF_BOOTSTRAP_ADMINS=
+
+# --- Email (blank = log-only mailer; set both to send via Resend) ---
+RESEND_API_KEY=
+EMAIL_FROM=
+
+# --- Plaid VRP consent scope (confirm with Plaid before go-live) ---
+PLAID_SCOPE=

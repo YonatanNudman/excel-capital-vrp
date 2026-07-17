@@ -38,10 +38,23 @@ export async function getAuthenticatedEmail(
     return email ? email.toLowerCase() : null;
   }
 
-  // Not configured: only trust headers in strictly local development.
+  // Not configured: only trust headers in strictly local development. The
+  // dev_user_email cookie (set by /api/dev-login) lets a normal browser session
+  // authenticate locally; it is ignored outside development.
   if (env.APP_ENV === "development") {
     const dev = headers.get(DEV_EMAIL_HEADER) ?? headers.get(ACCESS_EMAIL_HEADER);
-    return dev ? dev.toLowerCase() : null;
+    if (dev) return dev.toLowerCase();
+    const cookieEmail = readCookie(headers.get("cookie"), "dev_user_email");
+    return cookieEmail ? decodeURIComponent(cookieEmail).toLowerCase() : null;
+  }
+  return null;
+}
+
+function readCookie(cookieHeader: string | null, name: string): string | null {
+  if (!cookieHeader) return null;
+  for (const part of cookieHeader.split(";")) {
+    const [k, ...rest] = part.trim().split("=");
+    if (k === name) return rest.join("=");
   }
   return null;
 }
