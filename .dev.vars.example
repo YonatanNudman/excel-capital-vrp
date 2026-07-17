@@ -35,3 +35,6 @@ EMAIL_FROM=
 
 # --- Plaid VRP consent scope (confirm with Plaid before go-live) ---
 PLAID_SCOPE=
+
+# --- Local dev only ---
+APP_ENV=development

@@ -16,7 +16,7 @@ import type {
 /**
  * Deterministic mock used when Plaid credentials are absent (local dev, tests,
  * and pre-integration stages). It mimics the shape and the important behaviours
- * of Plaid VRP so the entire flow — setup, consent, execute, webhook — is
+ * of Plaid VRP so the entire flow, setup, consent, execute, webhook, is
  * exercisable end-to-end without real credentials.
  *
  * Behaviour: executePayment returns PAYMENT_STATUS_INITIATED (the realistic

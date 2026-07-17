@@ -88,8 +88,8 @@ export default async function BorrowersPage({
                     {b.legal_name}
                   </Link>
                 </td>
-                <td className="px-4 py-3 text-slate-600">{b.company_number ?? "—"}</td>
-                <td className="px-4 py-3 text-slate-600">{b.contact_email ?? "—"}</td>
+                <td className="px-4 py-3 text-slate-600">{b.company_number ?? "-"}</td>
+                <td className="px-4 py-3 text-slate-600">{b.contact_email ?? "-"}</td>
                 <td className="px-4 py-3">
                   <StatusBadge status={b.status} />
                 </td>

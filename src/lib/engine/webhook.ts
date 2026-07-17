@@ -84,32 +84,40 @@ export async function processWebhook(
     metadata: { from: payment.status, to: internal, plaidStatus: v.newStatus },
   });
 
+  // The state transition is the point of processing; mark it before the
+  // best-effort notifications so an email-path error can never leave a fully
+  // applied event looking unprocessed.
+  await markWebhookProcessed(db, rec.id);
+
   // Notify the borrower on terminal outcomes. Email is best-effort and must never
   // affect the webhook result: a settled receipt or a failure notice.
   if (mailer) {
-    if (internal === "settled") {
-      await notifyBorrower(db, mailer, payment, "email.receipt", (borrowerName) =>
-        receiptEmail({
-          borrowerName,
-          amountMinor: payment.amount_minor,
-          currency: payment.currency,
-          reference: payment.reference ?? "",
-          date: new Date().toISOString().slice(0, 10),
-        }),
-      );
-    } else if (internal === "failed" || internal === "rejected") {
-      await notifyBorrower(db, mailer, payment, "email.failure", (borrowerName) =>
-        failureEmail({
-          borrowerName,
-          amountMinor: payment.amount_minor,
-          currency: payment.currency,
-          reference: payment.reference ?? "",
-        }),
-      );
+    try {
+      if (internal === "settled") {
+        await notifyBorrower(db, mailer, payment, "email.receipt", (borrowerName) =>
+          receiptEmail({
+            borrowerName,
+            amountMinor: payment.amount_minor,
+            currency: payment.currency,
+            reference: payment.reference ?? "",
+            date: new Date().toISOString().slice(0, 10),
+          }),
+        );
+      } else if (internal === "failed" || internal === "rejected") {
+        await notifyBorrower(db, mailer, payment, "email.failure", (borrowerName) =>
+          failureEmail({
+            borrowerName,
+            amountMinor: payment.amount_minor,
+            currency: payment.currency,
+            reference: payment.reference ?? "",
+          }),
+        );
+      }
+    } catch (e) {
+      console.error(`webhook notification failed for payment ${payment.id}`, e);
     }
   }
 
-  await markWebhookProcessed(db, rec.id);
   return { status: "applied", paymentId: payment.id, from: payment.status, to: internal };
 }
 

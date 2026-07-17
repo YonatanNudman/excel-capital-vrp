@@ -39,9 +39,12 @@
 		}
 	],
 
+	// APP_ENV is deliberately NOT "development" here: a bare `wrangler deploy`
+	// (no --env) must come up fail-closed, never in dev-auth mode. Local dev gets
+	// APP_ENV=development from .dev.vars, which only applies to `wrangler dev`.
 	"vars": {
 		"PLAID_ENV": "sandbox",
-		"APP_ENV": "development"
+		"APP_ENV": "unset"
 	},
 
 	// Daily collection sweep at 06:00 UTC. Guarded server-side: a no-op until

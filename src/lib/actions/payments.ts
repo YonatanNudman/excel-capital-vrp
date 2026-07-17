@@ -20,7 +20,7 @@ function outcomeMessage(o: CollectOutcome): string {
     case "collected":
       return `Submitted (${o.plaidStatus}).`;
     case "duplicate":
-      return "Already submitted (idempotent — no duplicate created).";
+      return "Already submitted (idempotent, no duplicate created).";
     case "skipped":
       return `Skipped: ${o.reason}.`;
     case "failed":

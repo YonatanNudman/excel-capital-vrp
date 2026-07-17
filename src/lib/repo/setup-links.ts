@@ -24,8 +24,8 @@ export async function insertSetupLink(
 }
 
 /**
- * Look up a live (unused) setup link by token hash. Used links — whether
- * consumed on completion or invalidated when a newer link was issued — are
+ * Look up a live (unused) setup link by token hash. Used links, whether
+ * consumed on completion or invalidated when a newer link was issued, are
  * excluded, enforcing single-use and revocation.
  */
 export async function getSetupLinkByHash(

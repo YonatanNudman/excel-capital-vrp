@@ -46,8 +46,9 @@ export async function runAutoRetries(
 
   // Candidates: failed payments that are the LATEST attempt in their retry chain
   // (chain root = retry_of ?? id). A row is "latest" when no sibling sharing its
-  // root has a later created_at. Correlated NOT EXISTS, bound params only (no
-  // value interpolation).
+  // root has a later created_at, with id as a tie-break so two same-timestamp
+  // siblings can never both be selected in one pass (which would double-collect
+  // one chain). Correlated NOT EXISTS, bound params only (no value interpolation).
   const { results } = await db
     .prepare(
       `SELECT p.*
@@ -56,7 +57,8 @@ export async function runAutoRetries(
           AND NOT EXISTS (
             SELECT 1 FROM payments q
              WHERE COALESCE(q.retry_of, q.id) = COALESCE(p.retry_of, p.id)
-               AND q.created_at > p.created_at
+               AND (q.created_at > p.created_at
+                    OR (q.created_at = p.created_at AND q.id > p.id))
           )
         ORDER BY p.created_at ASC`,
     )

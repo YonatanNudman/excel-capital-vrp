@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Excel Capital — VRP Platform",
+  title: "Excel Capital VRP Platform",
   description: "Manage Plaid UK Variable Recurring Payment mandates and repayments.",
 };
 

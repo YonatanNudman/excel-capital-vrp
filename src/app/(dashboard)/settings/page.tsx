@@ -52,7 +52,7 @@ export default async function SettingsPage() {
             <label className="block col-span-2">
               <span className="text-sm font-medium text-slate-700">Reference format</span>
               <input name="defaultReferenceFormat" defaultValue={s.default_reference_format} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" />
-              <span className="mt-0.5 block text-xs text-slate-400">Tokens: {"{borrower}"} {"{seq}"} {"{date}"} — trimmed to 18 chars.</span>
+              <span className="mt-0.5 block text-xs text-slate-400">Tokens: {"{borrower}"} {"{seq}"} {"{date}"}, trimmed to 18 chars.</span>
             </label>
             <label className="block">
               <span className="text-sm font-medium text-slate-700">Sending domain</span>

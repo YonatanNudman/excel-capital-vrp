@@ -12,7 +12,7 @@
  *     email header) so the app is usable without Access in front.
  *
  * In staging/production without ACCESS_* configured, this returns null (fail
- * closed) — the app must sit behind a verified Access application.
+ * closed), the app must sit behind a verified Access application.
  */
 
 const ACCESS_EMAIL_HEADER = "cf-access-authenticated-user-email";

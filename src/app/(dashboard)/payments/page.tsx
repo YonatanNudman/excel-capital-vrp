@@ -134,7 +134,7 @@ export default async function PaymentsPage({
                   </Link>
                 </td>
                 <td className="px-4 py-3 font-medium">{formatMinor(p.amount_minor, p.currency)}</td>
-                <td className="px-4 py-3 text-slate-600">{p.reference ?? "—"}</td>
+                <td className="px-4 py-3 text-slate-600">{p.reference ?? "-"}</td>
                 <td className="px-4 py-3">
                   <StatusBadge status={p.status} />
                 </td>

@@ -3,7 +3,7 @@
  *
  * Internal states are our source of truth; Plaid statuses drive transitions via
  * webhooks. Key business rule: PAYMENT_STATUS_INITIATED means "the bank accepted
- * the payment for processing" and is treated as successfully SUBMITTED — not a
+ * the payment for processing" and is treated as successfully SUBMITTED, not a
  * failure, and not final settlement.
  *
  * Pure, I/O-free, and unit-tested by the scenario evals.

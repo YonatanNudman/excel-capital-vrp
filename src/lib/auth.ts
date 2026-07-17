@@ -26,7 +26,7 @@ export class AuthError extends Error {
  *
  * Bootstrap rule: an authenticated email is auto-provisioned as admin ONLY if it
  * appears in the STAFF_BOOTSTRAP_ADMINS allowlist (comma-separated). Without the
- * allowlist there is no auto-provisioning — staff must be seeded explicitly.
+ * allowlist there is no auto-provisioning, staff must be seeded explicitly.
  * This removes any "first arrival becomes admin" risk.
  */
 export async function getCurrentUser(): Promise<StaffUser | null> {

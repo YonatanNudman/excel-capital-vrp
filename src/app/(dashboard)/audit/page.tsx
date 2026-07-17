@@ -35,11 +35,11 @@ export default async function AuditPage() {
               <tr key={e.id}>
                 <td className="px-4 py-2.5 text-slate-600">{e.created_at.slice(0, 19).replace("T", " ")}</td>
                 <td className="px-4 py-2.5 text-slate-600">
-                  {e.actor_staff_id ? emailById.get(e.actor_staff_id) ?? "—" : "system"}
+                  {e.actor_staff_id ? emailById.get(e.actor_staff_id) ?? "-" : "system"}
                 </td>
                 <td className="px-4 py-2.5 font-medium text-slate-800">{e.action}</td>
                 <td className="px-4 py-2.5 text-slate-600">
-                  {e.entity_type ? `${e.entity_type}:${e.entity_id?.slice(0, 8)}` : "—"}
+                  {e.entity_type ? `${e.entity_type}:${e.entity_id?.slice(0, 8)}` : "-"}
                 </td>
                 <td className="px-4 py-2.5 text-xs text-slate-500">{e.metadata ?? ""}</td>
               </tr>

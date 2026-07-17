@@ -228,7 +228,7 @@ export class RealPlaidClient implements PlaidClient {
       if (!claims.request_body_sha256 || claims.request_body_sha256 !== bodyHash) {
         return empty;
       }
-      // Reject stale tokens (replay window) — 5 minutes.
+      // Reject stale tokens (replay window), 5 minutes.
       if (claims.iat && Math.abs(Date.now() / 1000 - claims.iat) > 300) {
         return empty;
       }

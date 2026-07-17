@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
  *
  * Real vs mock Plaid is decided by getPlaidClient(): the real client is used
  * only when PLAID_CLIENT_ID/PLAID_SECRET are present. Real payments therefore
- * move only once real credentials (with PLAID_ENV=production) are configured —
+ * move only once real credentials (with PLAID_ENV=production) are configured,
  * which is the owner's explicit production go-live step. In production the mock
  * client is refused outright (getPlaidClient throws).
  */

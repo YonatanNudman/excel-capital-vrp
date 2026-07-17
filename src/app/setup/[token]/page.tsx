@@ -76,7 +76,7 @@ export default async function SetupPage({
     <Shell>
       <h1 className="text-lg font-semibold">Authorise repayments</h1>
       <p className="mt-2 text-sm text-slate-600">
-        {borrower.legal_name} — set up a secure recurring payment authorisation
+        {borrower.legal_name}, set up a secure recurring payment authorisation
         with your bank through Plaid. Excel Capital never sees your bank login.
       </p>
       {error ? (

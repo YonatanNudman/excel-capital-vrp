@@ -63,7 +63,7 @@ export async function collectPayment(
     return { kind: "skipped", reason: "no authorised consent" };
   }
 
-  // Insert first — the DB UNIQUE(idempotency_key) is the double-collection guard.
+  // Insert first, the DB UNIQUE(idempotency_key) is the double-collection guard.
   let payment: Payment;
   try {
     payment = await insertPayment(db, {

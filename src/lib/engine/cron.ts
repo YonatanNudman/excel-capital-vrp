@@ -27,7 +27,7 @@ export interface CronSummary {
 /**
  * Scan all due schedules and attempt one collection each. Safety properties:
  *  - each collection uses a DETERMINISTIC scheduledKey(borrower, schedule, dueDate),
- *    so a cron double-fire (or overlapping run) cannot double-collect — the DB
+ *    so a cron double-fire (or overlapping run) cannot double-collect, the DB
  *    UNIQUE(idempotency_key) rejects the duplicate.
  *  - paused / non-collectable borrowers are skipped and their next_run_date is
  *    left intact so they resume cleanly.
@@ -102,7 +102,7 @@ export async function runDueCollections(
     );
 
     if (outcome.kind === "skipped") {
-      // e.g. paused / no consent — leave next_run_date so it retries next pass.
+      // e.g. paused / no consent, leave next_run_date so it retries next pass.
       summary.skipped++;
       continue;
     }
@@ -153,21 +153,53 @@ export async function runDueCollectionsFromEnv(
   const mailer = getMailer(env as MailerEnv);
   const now = new Date(`${today}T06:00:00Z`);
 
-  const maintenance = await runConsentMaintenance(env.DB, now, mailer);
-  const collections = await runDueCollections(
-    env.DB,
-    plaid,
-    env.APP_ENCRYPTION_KEY,
-    today,
-    mailer,
+  // Each phase is isolated: a failure in one is audited and must never stop the
+  // others, so a single bad row cannot wedge a whole day's collections.
+  const maintenance = await phase(env.DB, today, "consent_maintenance", () =>
+    runConsentMaintenance(env.DB, now, mailer),
   );
-  const retries = await runAutoRetries(env.DB, plaid, env.APP_ENCRYPTION_KEY, now);
+  const collections = await phase(env.DB, today, "collections", () =>
+    runDueCollections(env.DB, plaid, env.APP_ENCRYPTION_KEY, today, mailer),
+  );
+  const retries = await phase(env.DB, today, "auto_retries", () =>
+    runAutoRetries(env.DB, plaid, env.APP_ENCRYPTION_KEY, now),
+  );
 
   return {
-    ...collections,
-    consentExpired: maintenance.expired,
-    consentExpiringSoon: maintenance.expiringSoon,
-    autoRetried: retries.retried,
-    autoRetryFailed: retries.failed,
+    ...(collections ?? {
+      date: today,
+      considered: 0,
+      collected: 0,
+      duplicate: 0,
+      skipped: 0,
+      failed: 0,
+      ended: 0,
+    }),
+    consentExpired: maintenance?.expired ?? 0,
+    consentExpiringSoon: maintenance?.expiringSoon ?? 0,
+    autoRetried: retries?.retried ?? 0,
+    autoRetryFailed: retries?.failed ?? 0,
   };
+}
+
+/** Run one cron phase; on error, audit it and return null instead of throwing. */
+async function phase<T>(
+  db: D1Database,
+  today: string,
+  name: string,
+  fn: () => Promise<T>,
+): Promise<T | null> {
+  try {
+    return await fn();
+  } catch (e) {
+    console.error(`cron phase ${name} failed`, e);
+    await writeAudit(db, {
+      actorStaffId: null,
+      action: "cron.phase_error",
+      entityType: "cron",
+      entityId: today,
+      metadata: { phase: name, error: String(e).slice(0, 500) },
+    });
+    return null;
+  }
 }

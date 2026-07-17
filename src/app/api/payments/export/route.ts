@@ -4,14 +4,9 @@ import { listPayments } from "@/lib/repo/payments";
 import { listBorrowers } from "@/lib/repo/borrowers";
 import { writeAudit } from "@/lib/repo/audit";
 import { fromMinorUnits } from "@/lib/money";
+import { csvCell as csv } from "@/lib/csv";
 
 export const dynamic = "force-dynamic";
-
-/** CSV escape: wrap in quotes and double any embedded quotes. */
-function csv(value: unknown): string {
-  const s = value == null ? "" : String(value);
-  return `"${s.replace(/"/g, '""')}"`;
-}
 
 /** Reconciliation export of all payments (any staff role; audited). */
 export async function GET() {

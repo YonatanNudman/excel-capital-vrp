@@ -34,7 +34,7 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex justify-between gap-4 py-1 text-sm">
       <span className="text-slate-500">{label}</span>
-      <span className="text-right font-medium text-slate-800">{value ?? "—"}</span>
+      <span className="text-right font-medium text-slate-800">{value ?? "-"}</span>
     </div>
   );
 }
@@ -195,7 +195,7 @@ export default async function BorrowerProfile({
                   <tr key={p.id}>
                     <td className="py-2 text-slate-600">{p.created_at.slice(0, 10)}</td>
                     <td className="py-2 font-medium">{formatMinor(p.amount_minor, p.currency)}</td>
-                    <td className="py-2 text-slate-600">{p.reference ?? "—"}</td>
+                    <td className="py-2 text-slate-600">{p.reference ?? "-"}</td>
                     <td className="py-2">
                       <StatusBadge status={p.status} />
                       {p.failure_reason && (
