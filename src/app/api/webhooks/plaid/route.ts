@@ -1,6 +1,7 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { getPlaidClient, isPlaidConfigured } from "@/lib/plaid";
 import { processWebhook } from "@/lib/engine/webhook";
+import { getMailer, type MailerEnv } from "@/lib/mailer";
 
 export const dynamic = "force-dynamic";
 
@@ -20,8 +21,9 @@ export async function POST(request: Request) {
   }
   const rawBody = await request.text();
   const plaid = getPlaidClient(env);
+  const mailer = getMailer(env as MailerEnv);
 
-  const result = await processWebhook(env.DB, plaid, rawBody, request.headers);
+  const result = await processWebhook(env.DB, plaid, rawBody, request.headers, mailer);
 
   if (result.status === "unverified") {
     return Response.json({ ok: false, reason: "unverified" }, { status: 400 });

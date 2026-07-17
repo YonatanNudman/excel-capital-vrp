@@ -13,6 +13,8 @@ import { writeAudit } from "@/lib/repo/audit";
 import { decryptString } from "@/lib/crypto";
 import { mapPlaidStatus } from "@/lib/payment-state";
 import type { Payment } from "@/lib/types";
+import type { Mailer } from "@/lib/mailer";
+import { failureEmail } from "@/lib/mailer/templates";
 
 export type CollectOutcome =
   | { kind: "duplicate"; idempotencyKey: string }
@@ -47,6 +49,7 @@ export async function collectPayment(
   plaid: PlaidClient,
   encryptionKey: string,
   input: CollectInput,
+  mailer?: Mailer,
 ): Promise<CollectOutcome> {
   const borrower = await getBorrower(db, input.borrowerId);
   if (!borrower) return { kind: "skipped", reason: "borrower not found" };
@@ -124,6 +127,26 @@ export async function collectPayment(
       entityId: payment.id,
       metadata: { reason },
     });
+
+    // Notify the borrower that this collection failed. Best-effort: the internal
+    // failure reason is never included in the email. Skip when no contact_email.
+    if (mailer && borrower.contact_email) {
+      const { subject, text } = failureEmail({
+        borrowerName: borrower.legal_name,
+        amountMinor: input.amountMinor,
+        currency: input.currency ?? "GBP",
+        reference: input.reference,
+      });
+      const emailResult = await mailer.send({ to: borrower.contact_email, subject, text });
+      await writeAudit(db, {
+        actorStaffId: input.actorStaffId,
+        action: "email.failure",
+        entityType: "payment",
+        entityId: payment.id,
+        metadata: { mode: mailer.mode, ok: emailResult.ok, to: borrower.contact_email },
+      });
+    }
+
     return { kind: "failed", payment, reason };
   }
 }

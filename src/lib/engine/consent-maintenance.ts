@@ -1,6 +1,8 @@
 import { overdueConsents, consentsExpiringSoon, setConsentStatus } from "@/lib/repo/consents";
-import { setBorrowerStatus } from "@/lib/repo/borrowers";
-import { writeAudit } from "@/lib/repo/audit";
+import { setBorrowerStatus, getBorrower } from "@/lib/repo/borrowers";
+import { writeAudit, listAudit } from "@/lib/repo/audit";
+import type { Mailer } from "@/lib/mailer";
+import { reconsentEmail } from "@/lib/mailer/templates";
 
 export interface ConsentMaintenanceSummary {
   expired: number;
@@ -8,6 +10,15 @@ export interface ConsentMaintenanceSummary {
 }
 
 const EXPIRING_SOON_DAYS = 7;
+
+/**
+ * True if a re-consent email has already been audited for this consent. Used to
+ * guarantee the borrower is warned at most once per consent, across cron runs.
+ */
+async function reconsentAlreadySent(db: D1Database, consentId: string): Promise<boolean> {
+  const entries = await listAudit(db, { entityType: "consent", entityId: consentId });
+  return entries.some((e) => e.action === "email.reconsent");
+}
 
 /**
  * Keep consent state honest and give staff early warning:
@@ -19,6 +30,7 @@ const EXPIRING_SOON_DAYS = 7;
 export async function runConsentMaintenance(
   db: D1Database,
   now: Date = new Date(),
+  mailer?: Mailer,
 ): Promise<ConsentMaintenanceSummary> {
   const nowIso = now.toISOString();
   const untilIso = new Date(now.getTime() + EXPIRING_SOON_DAYS * 86_400_000).toISOString();
@@ -45,6 +57,26 @@ export async function runConsentMaintenance(
       entityId: c.borrower_id,
       metadata: { consentId: c.id, validTo: c.valid_to },
     });
+
+    // Warn the borrower once per consent, ever. Dedupe on the audit trail so a
+    // daily cron does not re-send the same warning every run. Best-effort email.
+    if (mailer && !(await reconsentAlreadySent(db, c.id))) {
+      const borrower = await getBorrower(db, c.borrower_id);
+      if (borrower?.contact_email) {
+        const { subject, text } = reconsentEmail({
+          borrowerName: borrower.legal_name,
+          validTo: c.valid_to ?? "",
+        });
+        const result = await mailer.send({ to: borrower.contact_email, subject, text });
+        await writeAudit(db, {
+          actorStaffId: null,
+          action: "email.reconsent",
+          entityType: "consent",
+          entityId: c.id,
+          metadata: { mode: mailer.mode, ok: result.ok, to: borrower.contact_email },
+        });
+      }
+    }
   }
 
   return { expired: overdue.length, expiringSoon: soon.length };
