@@ -4,6 +4,34 @@ Staged, reviewable, test-first for money/security logic. Each stage is
 independently demoable in sandbox. Nothing touches production Plaid until the
 owner approves after sandbox testing.
 
+## Progress update (2026-07-17, evening): feature-complete pass
+
+Built by parallel Opus agents under a Fable orchestrator, merged, security
+reviewed (second review: no highs; all mediums fixed), and verified end to end
+in a real browser against the running app:
+
+- Email notifications: setup links, settlement receipts, failure notices, and
+  one-time re-consent warnings. Log-only mailer by default; Resend activates
+  automatically when RESEND_API_KEY + EMAIL_FROM are set. All sends audited.
+- Automatic retries of eligible failed payments in the daily cron, respecting
+  default_retry_max and default_retry_spacing_hours, idempotent per attempt.
+- Staff management UI (admin): add staff, change roles, disable/enable, with
+  last-active-admin and self-lockout guards; disabled staff cannot authenticate
+  (migration 0002 adds staff_users.disabled_at).
+- Borrower edit page; payments CSV export (formula-injection safe, audited);
+  reconciliation cards; dev-only login for local browser testing (404 outside
+  APP_ENV=development; bare `wrangler deploy` target is fail-closed).
+- Cron phases isolated (consent maintenance, collections, auto-retries): a
+  failure in one phase is audited and never stops the others.
+- CI on GitHub (private repo YonatanNudman/excel-capital-vrp): typecheck, unit
+  tests, D1 integration tests, build. 75 tests passing (43 unit + 32 D1).
+- Staging redeployed and live-verified (auth locked, dev login 404, cron 401,
+  webhook 503 without Plaid, export 401).
+
+Still requiring humans: Plaid credentials (then validate the real client against
+sandbox), custom domain + Zero Trust Access enablement, sending domain or Resend
+key for real email, owner's production go-live approval.
+
 ## Progress (2026-07-17)
 
 - Stage 0 — DONE. Scaffold, D1 schema, domain logic, evals.
