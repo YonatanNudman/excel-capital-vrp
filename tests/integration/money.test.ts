@@ -4,7 +4,8 @@ import { MockPlaidClient } from "@/lib/plaid/mock";
 import { collectPayment } from "@/lib/engine/collect";
 import { processWebhook } from "@/lib/engine/webhook";
 import { runDueCollections } from "@/lib/engine/cron";
-import { createBorrower, setBorrowerStatus } from "@/lib/repo/borrowers";
+import { runConsentMaintenance } from "@/lib/engine/consent-maintenance";
+import { createBorrower, setBorrowerStatus, getBorrower } from "@/lib/repo/borrowers";
 import { upsertRecipient } from "@/lib/repo/recipients";
 import {
   createPendingConsent,
@@ -40,6 +41,36 @@ async function seedBorrower(opts: { authorized?: boolean } = {}) {
   if (opts.authorized !== false) await setConsentStatus(env.DB, consent.id, "authorized");
   return { borrower: b, consent };
 }
+
+describe("runConsentMaintenance", () => {
+  it("expires an overdue consent and flags the borrower, blocking collection", async () => {
+    const b = await createBorrower(env.DB, { legalName: "Overdue Ltd", createdBy: null });
+    await setBorrowerStatus(env.DB, b.id, "active");
+    await upsertRecipient(env.DB, b.id, { name: "Excel Capital" });
+    const consent = await createPendingConsent(env.DB, b.id, {
+      currency: "GBP",
+      validTo: "2020-01-01T00:00:00Z", // already past
+    });
+    await attachPlaidConsent(env.DB, consent.id, {
+      plaidConsentIdEncrypted: await encryptString("mock-consent-x", KEY),
+      plaidRecipientId: "mock-recipient-x",
+    });
+    await setConsentStatus(env.DB, consent.id, "authorized");
+
+    const summary = await runConsentMaintenance(env.DB, new Date("2026-07-17T06:00:00Z"));
+    expect(summary.expired).toBeGreaterThanOrEqual(1);
+    expect((await getBorrower(env.DB, b.id))?.status).toBe("expired");
+
+    const out = await collectPayment(env.DB, plaid, KEY, {
+      borrowerId: b.id,
+      amountMinor: 5000,
+      reference: "EXP",
+      idempotencyKey: manualKey(b.id, newId()),
+      actorStaffId: null,
+    });
+    expect(out.kind).toBe("skipped");
+  });
+});
 
 describe("collectPayment (D1 + mock Plaid)", () => {
   // Eval #1: same idempotency key twice -> exactly one payment.

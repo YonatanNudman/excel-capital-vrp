@@ -10,6 +10,7 @@ import { nextRunDate, isEnded, amountForRun } from "@/lib/schedule";
 import { scheduledKey } from "@/lib/idempotency";
 import { buildReference } from "@/lib/reference";
 import { writeAudit } from "@/lib/repo/audit";
+import { runConsentMaintenance } from "@/lib/engine/consent-maintenance";
 
 export interface CronSummary {
   date: string;
@@ -121,10 +122,24 @@ export async function runDueCollections(
   return summary;
 }
 
-/** Convenience wrapper that builds the Plaid client from env. */
+/**
+ * Full daily maintenance: expire/flag consents first (so collections against an
+ * expired consent are blocked), then run due collections.
+ */
 export async function runDueCollectionsFromEnv(
   env: CloudflareEnv,
   today: string,
-): Promise<CronSummary> {
-  return runDueCollections(env.DB, getPlaidClient(env), env.APP_ENCRYPTION_KEY, today);
+): Promise<CronSummary & { consentExpired: number; consentExpiringSoon: number }> {
+  const maintenance = await runConsentMaintenance(env.DB, new Date(`${today}T06:00:00Z`));
+  const collections = await runDueCollections(
+    env.DB,
+    getPlaidClient(env),
+    env.APP_ENCRYPTION_KEY,
+    today,
+  );
+  return {
+    ...collections,
+    consentExpired: maintenance.expired,
+    consentExpiringSoon: maintenance.expiringSoon,
+  };
 }

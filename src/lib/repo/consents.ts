@@ -84,6 +84,34 @@ export async function attachPlaidConsent(
     .run();
 }
 
+/** Authorised consents whose valid_to has already passed. */
+export async function overdueConsents(db: D1Database, nowIso: string): Promise<Consent[]> {
+  const { results } = await db
+    .prepare(
+      "SELECT * FROM consents WHERE status = 'authorized' AND valid_to IS NOT NULL AND valid_to < ?",
+    )
+    .bind(nowIso)
+    .all<Consent>();
+  return results ?? [];
+}
+
+/** Authorised consents expiring within the given window (not yet overdue). */
+export async function consentsExpiringSoon(
+  db: D1Database,
+  nowIso: string,
+  untilIso: string,
+): Promise<Consent[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT * FROM consents
+       WHERE status = 'authorized' AND valid_to IS NOT NULL
+         AND valid_to >= ? AND valid_to <= ?`,
+    )
+    .bind(nowIso, untilIso)
+    .all<Consent>();
+  return results ?? [];
+}
+
 export async function setConsentStatus(
   db: D1Database,
   id: string,

@@ -20,7 +20,9 @@ export function getAuthenticatedEmail(
   if (accessEmail) return accessEmail.toLowerCase();
 
   // Dev-only fallback so the app is testable before Access is configured.
-  if (opts.appEnv !== "production") {
+  // STRICTLY local development only — never staging or production, so deployed
+  // environments always hard-require a real Cloudflare Access identity.
+  if (opts.appEnv === "development") {
     const devEmail = headers.get(DEV_EMAIL_HEADER);
     if (devEmail) return devEmail.toLowerCase();
   }

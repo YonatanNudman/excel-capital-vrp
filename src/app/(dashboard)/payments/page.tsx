@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getDb } from "@/lib/db";
-import { listPayments } from "@/lib/repo/payments";
+import { listPayments, paymentSummary } from "@/lib/repo/payments";
 import { listBorrowers } from "@/lib/repo/borrowers";
 import { StatusBadge } from "@/components/status-badge";
 import { formatMinor } from "@/lib/money";
@@ -20,6 +20,31 @@ const STATUSES: (PaymentStatus | "all")[] = [
   "cancelled",
 ];
 
+function ReconCard({
+  label,
+  count,
+  amount,
+  tone,
+}: {
+  label: string;
+  count: number;
+  amount: string;
+  tone: "sky" | "emerald" | "red";
+}) {
+  const toneCls = {
+    sky: "text-sky-700",
+    emerald: "text-emerald-700",
+    red: "text-red-700",
+  }[tone];
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-4">
+      <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
+      <div className={`mt-1 text-xl font-semibold ${toneCls}`}>{amount}</div>
+      <div className="text-xs text-slate-400">{count} payment{count === 1 ? "" : "s"}</div>
+    </div>
+  );
+}
+
 export default async function PaymentsPage({
   searchParams,
 }: {
@@ -28,15 +53,37 @@ export default async function PaymentsPage({
   const sp = await searchParams;
   const status = (sp.status as PaymentStatus | "all") ?? "all";
   const db = getDb();
-  const [payments, borrowers] = await Promise.all([
+  const [payments, borrowers, summary] = await Promise.all([
     listPayments(db, { status, limit: 300 }),
     listBorrowers(db, {}),
+    paymentSummary(db),
   ]);
   const nameById = new Map(borrowers.map((b) => [b.id, b.legal_name]));
 
   return (
     <div>
       <h1 className="mb-6 text-2xl font-semibold tracking-tight">Payments</h1>
+
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <ReconCard
+          label="In flight"
+          count={summary.inFlightCount}
+          amount={formatMinor(summary.inFlightMinor)}
+          tone="sky"
+        />
+        <ReconCard
+          label="Settled"
+          count={summary.settledCount}
+          amount={formatMinor(summary.settledMinor)}
+          tone="emerald"
+        />
+        <ReconCard
+          label="Failed / rejected"
+          count={summary.failedCount}
+          amount={formatMinor(summary.failedMinor)}
+          tone="red"
+        />
+      </div>
 
       <form method="get" className="mb-4 flex items-center gap-2">
         <select name="status" defaultValue={status} className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm capitalize">

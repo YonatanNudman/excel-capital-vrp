@@ -143,6 +143,46 @@ export async function listPayments(
   return results ?? [];
 }
 
+export interface PaymentSummary {
+  inFlightCount: number;
+  inFlightMinor: number;
+  settledCount: number;
+  settledMinor: number;
+  failedCount: number;
+  failedMinor: number;
+}
+
+/** Aggregate totals for reconciliation (all borrowers). */
+export async function paymentSummary(db: D1Database): Promise<PaymentSummary> {
+  const row = await db
+    .prepare(
+      `SELECT
+         COALESCE(SUM(CASE WHEN status IN ('submitted','initiated','executed') THEN 1 ELSE 0 END),0) AS inflight_n,
+         COALESCE(SUM(CASE WHEN status IN ('submitted','initiated','executed') THEN amount_minor ELSE 0 END),0) AS inflight_m,
+         COALESCE(SUM(CASE WHEN status = 'settled' THEN 1 ELSE 0 END),0) AS settled_n,
+         COALESCE(SUM(CASE WHEN status = 'settled' THEN amount_minor ELSE 0 END),0) AS settled_m,
+         COALESCE(SUM(CASE WHEN status IN ('failed','rejected') THEN 1 ELSE 0 END),0) AS failed_n,
+         COALESCE(SUM(CASE WHEN status IN ('failed','rejected') THEN amount_minor ELSE 0 END),0) AS failed_m
+       FROM payments`,
+    )
+    .first<{
+      inflight_n: number;
+      inflight_m: number;
+      settled_n: number;
+      settled_m: number;
+      failed_n: number;
+      failed_m: number;
+    }>();
+  return {
+    inFlightCount: row?.inflight_n ?? 0,
+    inFlightMinor: row?.inflight_m ?? 0,
+    settledCount: row?.settled_n ?? 0,
+    settledMinor: row?.settled_m ?? 0,
+    failedCount: row?.failed_n ?? 0,
+    failedMinor: row?.failed_m ?? 0,
+  };
+}
+
 /** Count succeeded payments and total collected for a borrower (for schedule end logic). */
 export async function collectionProgress(
   db: D1Database,
