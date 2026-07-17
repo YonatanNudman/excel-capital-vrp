@@ -1,0 +1,208 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { getDb } from "@/lib/db";
+import { getBorrower } from "@/lib/repo/borrowers";
+import { getActiveConsent } from "@/lib/repo/consents";
+import { getActiveSchedule } from "@/lib/repo/schedules";
+import { getRecipient } from "@/lib/repo/recipients";
+import { listPaymentsForBorrower } from "@/lib/repo/payments";
+import { getCurrentUser, hasRole } from "@/lib/auth";
+import { setBorrowerStatusAction } from "@/lib/actions/borrowers";
+import { StatusBadge } from "@/components/status-badge";
+import {
+  ExecuteNowButton,
+  RetryButton,
+  SetupLinkButton,
+} from "@/components/action-buttons";
+import { formatMinor } from "@/lib/money";
+
+export const dynamic = "force-dynamic";
+
+function Card({ title, children, action }: { title: string; children: React.ReactNode; action?: React.ReactNode }) {
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white p-5">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{title}</h2>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function Row({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex justify-between gap-4 py-1 text-sm">
+      <span className="text-slate-500">{label}</span>
+      <span className="text-right font-medium text-slate-800">{value ?? "—"}</span>
+    </div>
+  );
+}
+
+function scheduleSummary(s: {
+  amount_minor: number;
+  currency: string;
+  frequency: string;
+  interval_days: number | null;
+  end_mode: string;
+  end_date: string | null;
+  end_count: number | null;
+  end_total_minor: number | null;
+}): string {
+  const freq =
+    s.frequency === "custom" ? `every ${s.interval_days ?? "?"} days` : s.frequency;
+  let end = "";
+  if (s.end_mode === "count") end = `for ${s.end_count ?? "?"} payments`;
+  else if (s.end_mode === "date") end = `until ${s.end_date ?? "?"}`;
+  else if (s.end_mode === "total")
+    end = `until ${formatMinor(s.end_total_minor ?? 0, s.currency)} collected`;
+  return `${formatMinor(s.amount_minor, s.currency)} ${freq}, ${end}`;
+}
+
+export default async function BorrowerProfile({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
+  const db = getDb();
+  const borrower = await getBorrower(db, id);
+  if (!borrower) notFound();
+
+  const [consent, schedule, recipient, payments, user] = await Promise.all([
+    getActiveConsent(db, id),
+    getActiveSchedule(db, id),
+    getRecipient(db, id),
+    listPaymentsForBorrower(db, id, 50),
+    getCurrentUser(),
+  ]);
+  const canOperate = user ? hasRole(user, "operator") : false;
+  const paused = borrower.status === "paused";
+
+  return (
+    <div>
+      <div className="mb-6">
+        <Link href="/borrowers" className="text-sm text-slate-500 hover:underline">
+          ← Borrowers
+        </Link>
+        <div className="mt-1 flex items-center gap-3">
+          <h1 className="text-2xl font-semibold tracking-tight">{borrower.legal_name}</h1>
+          <StatusBadge status={borrower.status} />
+        </div>
+      </div>
+
+      {canOperate && (
+        <div className="mb-6 flex flex-wrap items-start gap-3 rounded-lg border border-slate-200 bg-white p-4">
+          <ExecuteNowButton borrowerId={borrower.id} />
+          <SetupLinkButton borrowerId={borrower.id} />
+          <form action={setBorrowerStatusAction}>
+            <input type="hidden" name="borrowerId" value={borrower.id} />
+            <input type="hidden" name="status" value={paused ? "active" : "paused"} />
+            <button
+              type="submit"
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-slate-50"
+            >
+              {paused ? "Resume collections" : "Pause collections"}
+            </button>
+          </form>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+        <Card title="Business">
+          <Row label="Legal name" value={borrower.legal_name} />
+          <Row label="Company number" value={borrower.company_number} />
+          <Row label="Contact email" value={borrower.contact_email} />
+          <Row label="Contact phone" value={borrower.contact_phone} />
+        </Card>
+
+        <Card title="Recipient">
+          <Row label="Account name" value={recipient?.name} />
+          <Row label="Account number" value={recipient?.account_number} />
+          <Row label="Sort code" value={recipient?.sort_code} />
+          <Row label="Plaid recipient" value={recipient?.plaid_recipient_id ? "linked" : "not yet"} />
+        </Card>
+
+        <Card title="Consent">
+          <Row label="Status" value={consent ? <StatusBadge status={consent.status} /> : "none"} />
+          <Row
+            label="Max per payment"
+            value={consent?.max_payment_amount_minor != null
+              ? formatMinor(consent.max_payment_amount_minor, consent.currency)
+              : null}
+          />
+          <Row
+            label="Max per period"
+            value={consent?.periodic_max_amount_minor != null
+              ? `${formatMinor(consent.periodic_max_amount_minor, consent.currency)} / ${consent.period ?? "?"}`
+              : null}
+          />
+          <Row label="Valid to" value={consent?.valid_to} />
+        </Card>
+
+        <Card
+          title="Schedule"
+          action={
+            canOperate ? (
+              <Link href={`/borrowers/${borrower.id}/schedule`} className="text-xs text-slate-500 hover:underline">
+                Edit
+              </Link>
+            ) : undefined
+          }
+        >
+          {schedule ? (
+            <>
+              <p className="text-sm text-slate-800">{scheduleSummary(schedule)}</p>
+              <Row label="Next run" value={schedule.next_run_date} />
+            </>
+          ) : (
+            <p className="text-sm text-slate-400">No active schedule.</p>
+          )}
+        </Card>
+      </div>
+
+      <div className="mt-5">
+        <Card title="Payment history">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-left text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="py-2 font-medium">Date</th>
+                  <th className="py-2 font-medium">Amount</th>
+                  <th className="py-2 font-medium">Reference</th>
+                  <th className="py-2 font-medium">Status</th>
+                  <th className="py-2 font-medium"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {payments.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="py-6 text-center text-slate-400">
+                      No payments yet.
+                    </td>
+                  </tr>
+                )}
+                {payments.map((p) => (
+                  <tr key={p.id}>
+                    <td className="py-2 text-slate-600">{p.created_at.slice(0, 10)}</td>
+                    <td className="py-2 font-medium">{formatMinor(p.amount_minor, p.currency)}</td>
+                    <td className="py-2 text-slate-600">{p.reference ?? "—"}</td>
+                    <td className="py-2">
+                      <StatusBadge status={p.status} />
+                      {p.failure_reason && (
+                        <span className="ml-2 text-xs text-red-500">{p.failure_reason}</span>
+                      )}
+                    </td>
+                    <td className="py-2 text-right">
+                      {canOperate && p.status === "failed" && <RetryButton paymentId={p.id} />}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}

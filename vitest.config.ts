@@ -10,7 +10,9 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["tests/**/*.test.ts"],
+    // Pure domain-logic tests only (top-level). D1 integration tests live in
+    // tests/integration and run under the Workers pool (vitest.workers.config.ts).
+    include: ["tests/*.test.ts"],
     environment: "node",
   },
 });

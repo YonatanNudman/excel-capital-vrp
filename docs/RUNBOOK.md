@@ -2,6 +2,30 @@
 
 Operational procedures. Keep this current as infrastructure changes.
 
+## Local development
+
+- Install: `npm install`. Secrets: `cp .dev.vars.example .dev.vars` and fill in
+  (or reuse the existing gitignored `.dev.vars`).
+- Migrate local D1: `npm run db:migrate:local`.
+- Run the Worker locally: export the personal Cloudflare token, then
+  `npx wrangler dev --local`. (Do NOT use the shell's global TPG token.)
+- Auth in local dev: there is no Cloudflare Access, so send a
+  `X-Dev-User-Email: you@example.com` header to simulate a signed-in staff user.
+  The first authenticated email becomes an admin (bootstrap).
+- Tests: `npm test` (unit + D1 integration). `npm run typecheck` for types.
+- Trigger the cron sweep locally: `curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+6+*+*+*"`
+  or `POST /api/cron/run` with `Authorization: Bearer $CRON_SECRET`.
+
+## Plaid mock vs real
+
+The app runs end-to-end WITHOUT Plaid credentials: `getPlaidClient()` returns a
+deterministic mock when `PLAID_CLIENT_ID`/`PLAID_SECRET` are absent, and the real
+fetch-based client when they are present. No code changes are needed to switch;
+just set the secrets. The real client's request/response shapes follow Plaid's
+Payment Initiation API but MUST be validated against live sandbox once
+credentials arrive (see comments in `src/lib/plaid/real.ts`, especially the VRP
+consent `scope` and webhook JWT verification).
+
 ## Cloudflare account
 
 - Personal "Excel Capital" account. Account ID: `8a7709fc80e3e6188830ccc08e8692f3`.
