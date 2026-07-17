@@ -151,6 +151,7 @@ export async function updateBorrowerDetailsAction(fd: FormData): Promise<void> {
     entityId: borrowerId,
   });
   revalidatePath(`/borrowers/${borrowerId}`);
+  redirect(`/borrowers/${borrowerId}`);
 }
 
 /** Pause or resume collections for a borrower. */

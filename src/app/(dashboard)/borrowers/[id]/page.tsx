@@ -109,7 +109,16 @@ export default async function BorrowerProfile({
       )}
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-        <Card title="Business">
+        <Card
+          title="Business"
+          action={
+            canOperate ? (
+              <Link href={`/borrowers/${borrower.id}/edit`} className="text-xs text-slate-500 hover:underline">
+                Edit
+              </Link>
+            ) : undefined
+          }
+        >
           <Row label="Legal name" value={borrower.legal_name} />
           <Row label="Company number" value={borrower.company_number} />
           <Row label="Contact email" value={borrower.contact_email} />

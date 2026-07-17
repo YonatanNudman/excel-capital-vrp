@@ -48,6 +48,11 @@ export async function getCurrentUser(): Promise<StaffUser | null> {
       return null; // authenticated but not authorised
     }
   }
+  // A disabled account is treated as not authorised. getStaffByEmail still
+  // returns the disabled row above, so the bootstrap path never tries to
+  // re-create an existing-but-disabled user (which would hit UNIQUE(email)).
+  if (user.disabled_at) return null;
+
   await touchLastLogin(db, user.id);
   return user;
 }

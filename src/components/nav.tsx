@@ -7,6 +7,7 @@ const LINKS = [
   { href: "/borrowers", label: "Borrowers" },
   { href: "/payments", label: "Payments" },
   { href: "/audit", label: "Audit" },
+  { href: "/staff", label: "Staff", adminOnly: true },
   { href: "/settings", label: "Settings", adminOnly: true },
 ];
 
