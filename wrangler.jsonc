@@ -53,12 +53,20 @@
 	"env": {
 		"staging": {
 			"name": "excel-capital-vrp-staging",
-			"vars": { "PLAID_ENV": "sandbox", "APP_ENV": "staging" },
+			"vars": {
+				"PLAID_ENV": "sandbox",
+				"APP_ENV": "staging",
+				"STAFF_BOOTSTRAP_ADMINS": "yonatan@thepipelinegroup.io"
+			},
+			"images": { "binding": "IMAGES" },
+			"services": [
+				{ "binding": "WORKER_SELF_REFERENCE", "service": "excel-capital-vrp-staging" }
+			],
 			"d1_databases": [
 				{
 					"binding": "DB",
-					"database_name": "excel-capital-vrp",
-					"database_id": "02118551-a7a3-406c-a9ed-786e893ade96",
+					"database_name": "excel-capital-vrp-staging",
+					"database_id": "d1f11366-09cf-4eeb-a207-28fc497cd32b",
 					"migrations_dir": "migrations"
 				}
 			],
@@ -66,12 +74,20 @@
 		},
 		"production": {
 			"name": "excel-capital-vrp-prod",
-			"vars": { "PLAID_ENV": "production", "APP_ENV": "production" },
+			"vars": {
+				"PLAID_ENV": "production",
+				"APP_ENV": "production",
+				"STAFF_BOOTSTRAP_ADMINS": "yonatan@thepipelinegroup.io"
+			},
+			"images": { "binding": "IMAGES" },
+			"services": [
+				{ "binding": "WORKER_SELF_REFERENCE", "service": "excel-capital-vrp-prod" }
+			],
 			"d1_databases": [
 				{
 					"binding": "DB",
-					"database_name": "excel-capital-vrp",
-					"database_id": "02118551-a7a3-406c-a9ed-786e893ade96",
+					"database_name": "excel-capital-vrp-prod",
+					"database_id": "21adc836-a680-44af-895d-b7b4edd78cee",
 					"migrations_dir": "migrations"
 				}
 			],

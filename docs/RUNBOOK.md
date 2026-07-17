@@ -70,11 +70,40 @@ consent `scope` and webhook JWT verification).
 - D1 time-travel/backups: enable and confirm restore before go-live (the payment
   ledger must be recoverable).
 
-## Deploy
+## Deployed environments
 
-- Staging: `npx opennextjs-cloudflare build && npx wrangler deploy --env staging`
+Personal Cloudflare account `8a7709fc80e3e6188830ccc08e8692f3`. workers.dev
+subdomain: `excel-capital.workers.dev`.
+
+- STAGING — DEPLOYED. `https://excel-capital-vrp-staging.excel-capital.workers.dev`
+  - D1 `excel-capital-vrp-staging` (`d1f11366-09cf-4eeb-a207-28fc497cd32b`), migrated.
+  - Cron `0 6 * * *` registered. APP_ENV=staging, mock Plaid (sandbox).
+  - Secrets set: APP_ENCRYPTION_KEY, CRON_SECRET, SETUP_LINK_SIGNING_SECRET.
+  - The dashboard is intentionally LOCKED (returns "Not authorised") until
+    Cloudflare Access is configured — staging does not honour the dev header.
+- PRODUCTION — NOT deployed. D1 `excel-capital-vrp-prod`
+  (`21adc836-a680-44af-895d-b7b4edd78cee`) created for env separation. Deploy
+  only at go-live (real Plaid + Access + owner approval).
+
+## Deploy commands
+
+- Staging: `npx opennextjs-cloudflare build && npx opennextjs-cloudflare deploy -- --env staging`
 - Production: same with `--env production` — ONLY after owner approves go-live
   and Plaid production secrets are set.
+- Set secrets per env: `wrangler secret bulk secrets.json --env <env>` (never
+  commit that file) or `wrangler secret put NAME --env <env>`.
+
+## Make staging usable (requires dashboard + a domain)
+
+The deployed staging app is secure-by-default (locked) until Access is set up.
+To make it usable/demoable to staff you need:
+1. Add a domain (zone) to this Cloudflare account (the app cannot sit behind
+   Access on a `*.workers.dev` URL). Route the Worker to a hostname on that zone.
+2. Enable Zero Trust Access in the dashboard (one-time "Enable Access").
+3. Create a self-hosted Access application for that hostname + a policy allowing
+   staff emails; then set `ACCESS_AUD` and `ACCESS_TEAM_DOMAIN` as Worker
+   secrets (see "Staff auth" above) and redeploy.
+Until then, review the UI locally with `wrangler dev` / `npm run dev`.
 
 ## Plaid go-live gate
 
