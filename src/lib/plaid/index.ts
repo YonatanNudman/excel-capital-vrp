@@ -15,6 +15,7 @@ export function getPlaidClient(env: {
   PLAID_SECRET?: string;
   PLAID_ENV?: string;
   PLAID_SCOPE?: string;
+  APP_ENV?: string;
 }): PlaidClient {
   if (env.PLAID_CLIENT_ID && env.PLAID_SECRET) {
     return new RealPlaidClient({
@@ -23,6 +24,11 @@ export function getPlaidClient(env: {
       env: env.PLAID_ENV ?? "sandbox",
       scope: env.PLAID_SCOPE,
     });
+  }
+  // Fail closed in production: never silently fall back to the mock (which would
+  // trust unauthenticated webhooks and "succeed" every payment).
+  if (env.APP_ENV === "production") {
+    throw new Error("Plaid credentials are required in production (mock client is not permitted)");
   }
   return new MockPlaidClient();
 }

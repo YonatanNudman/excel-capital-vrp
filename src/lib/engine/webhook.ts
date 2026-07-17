@@ -23,15 +23,28 @@ export async function processWebhook(
 ): Promise<WebhookResult> {
   const v = await plaid.verifyWebhook(rawBody, headers);
 
+  // Verify BEFORE recording. Unverified events are stored with a random id (so a
+  // forged POST cannot pre-consume a legitimate delivery id and suppress the real
+  // webhook), then rejected. Only verified events use the real delivery id for dedupe.
+  if (!v.verified) {
+    await recordWebhookEvent(db, {
+      eventId: null,
+      type: v.type,
+      plaidPaymentId: v.paymentId,
+      payload: rawBody,
+      signatureVerified: false,
+    });
+    return { status: "unverified" };
+  }
+
   const rec = await recordWebhookEvent(db, {
     eventId: v.eventId,
     type: v.type,
     plaidPaymentId: v.paymentId,
     payload: rawBody,
-    signatureVerified: v.verified,
+    signatureVerified: true,
   });
   if (!rec.inserted) return { status: "duplicate" };
-  if (!v.verified) return { status: "unverified" };
 
   if (!v.paymentId || !v.newStatus) {
     await markWebhookProcessed(db, rec.id);

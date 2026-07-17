@@ -22,23 +22,27 @@ export class AuthError extends Error {
 }
 
 /**
- * Resolve the current staff user from the Cloudflare Access identity.
+ * Resolve the current staff user from the (verified) Cloudflare Access identity.
  *
- * Bootstrap rule: if a valid Access identity arrives and the staff table is
- * EMPTY, the first user is provisioned as admin. This is safe because Access
- * already restricts who can reach the app at the edge.
+ * Bootstrap rule: an authenticated email is auto-provisioned as admin ONLY if it
+ * appears in the STAFF_BOOTSTRAP_ADMINS allowlist (comma-separated). Without the
+ * allowlist there is no auto-provisioning — staff must be seeded explicitly.
+ * This removes any "first arrival becomes admin" risk.
  */
 export async function getCurrentUser(): Promise<StaffUser | null> {
   const env = getEnv();
   const db = getDb();
   const h = await headers();
-  const email = getAuthenticatedEmail(h, { appEnv: env.APP_ENV ?? "development" });
+  const email = await getAuthenticatedEmail(h, {
+    APP_ENV: env.APP_ENV,
+    ACCESS_TEAM_DOMAIN: env.ACCESS_TEAM_DOMAIN,
+    ACCESS_AUD: env.ACCESS_AUD,
+  });
   if (!email) return null;
 
   let user = await getStaffByEmail(db, email);
   if (!user) {
-    const total = await countStaff(db);
-    if (total === 0) {
+    if (isBootstrapAdmin(email, env.STAFF_BOOTSTRAP_ADMINS)) {
       user = await createStaff(db, email, "admin");
     } else {
       return null; // authenticated but not authorised
@@ -46,6 +50,15 @@ export async function getCurrentUser(): Promise<StaffUser | null> {
   }
   await touchLastLogin(db, user.id);
   return user;
+}
+
+function isBootstrapAdmin(email: string, allowlist: string | undefined): boolean {
+  if (!allowlist) return false;
+  const allowed = allowlist
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  return allowed.includes(email.toLowerCase());
 }
 
 export async function requireUser(): Promise<StaffUser> {

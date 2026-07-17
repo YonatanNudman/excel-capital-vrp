@@ -30,4 +30,8 @@ describe("manualKey", () => {
   it("is unique per nonce", () => {
     expect(manualKey("b1", "n1")).not.toBe(manualKey("b1", "n2"));
   });
+  // A stable per-render nonce makes double-submits idempotent.
+  it("is stable for the same nonce (double-submit safety)", () => {
+    expect(manualKey("b1", "n1")).toBe(manualKey("b1", "n1"));
+  });
 });

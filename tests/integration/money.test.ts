@@ -159,12 +159,13 @@ describe("processWebhook (D1 + mock Plaid)", () => {
     return row!.plaid_payment_id!;
   }
 
-  function webhook(paymentId: string, status: string, eventId: string): string {
+  function webhook(paymentId: string, status: string, eventId?: string): string {
     return JSON.stringify({
       webhook_type: "PAYMENT_INITIATION",
       payment_id: paymentId,
       new_payment_status: status,
-      event_id: eventId,
+      timestamp: "2026-07-17T06:00:00Z",
+      ...(eventId ? { event_id: eventId } : {}),
     });
   }
 
@@ -184,6 +185,26 @@ describe("processWebhook (D1 + mock Plaid)", () => {
     const second = await processWebhook(env.DB, plaid, body, new Headers());
     expect(first.status).toBe("applied");
     expect(second.status).toBe("duplicate");
+  });
+
+  // Regression guard for the dedupe bug: without an event_id, successive
+  // transitions of the same payment must each be processed (not collapsed).
+  it("processes successive transitions when no event_id is present", async () => {
+    const pid = await collectOne();
+    const executed = await processWebhook(env.DB, plaid, webhook(pid, "PAYMENT_STATUS_EXECUTED"), new Headers());
+    const settled = await processWebhook(env.DB, plaid, webhook(pid, "PAYMENT_STATUS_SETTLED"), new Headers());
+    expect(executed.status).toBe("applied");
+    expect(settled.status).toBe("applied");
+    expect((await getPaymentByPlaidId(env.DB, pid))?.status).toBe("settled");
+  });
+
+  it("rejects an unverified (malformed) webhook without changing state", async () => {
+    const pid = await collectOne();
+    const res = await processWebhook(env.DB, plaid, "not json", new Headers());
+    expect(res.status).toBe("unverified");
+    // A later genuine delivery is still processed (dedupe not poisoned).
+    const ok = await processWebhook(env.DB, plaid, webhook(pid, "PAYMENT_STATUS_SETTLED"), new Headers());
+    expect(ok.status).toBe("applied");
   });
 
   // Eval: a late 'failed' after 'settled' (terminal) is ignored.

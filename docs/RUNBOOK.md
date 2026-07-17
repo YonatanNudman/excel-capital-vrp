@@ -48,10 +48,21 @@ consent `scope` and webhook JWT verification).
 2. Domain = the app's production hostname.
 3. Policy: allow the specific staff email addresses (or the company domain).
    Identity provider: Google or one-time PIN.
-4. The app reads the verified email from `Cf-Access-Authenticated-User-Email`.
-5. Seed each staff email into `staff_users` with a role (admin/operator/viewer).
-6. Local dev has no Access: set header `X-Dev-User-Email` to simulate a user
-   (only honoured when APP_ENV !== production).
+4. Copy the application **AUD tag** and your team domain, and set them as Worker
+   secrets/vars: `ACCESS_AUD` and `ACCESS_TEAM_DOMAIN` (e.g. `myteam.cloudflareaccess.com`).
+   When these are set, the app **cryptographically verifies** the
+   `Cf-Access-Jwt-Assertion` JWT (RS256, issuer/audience/expiry) — it does NOT
+   trust the plaintext email header. If they are unset in a deployed env, the
+   app fails closed (nobody is authenticated).
+5. **Disable the `workers.dev` route** in production so the Worker is only
+   reachable behind Access (prevents header spoofing off the Access path).
+6. Set `STAFF_BOOTSTRAP_ADMINS` (comma-separated emails) to the initial admins;
+   they are auto-provisioned as admin on first login. Everyone else must be
+   seeded into `staff_users` with a role by an admin. There is NO
+   "first arrival becomes admin".
+7. Local dev has no Access: leave `ACCESS_*` blank and set header
+   `X-Dev-User-Email` (only honoured when `APP_ENV=development`). Put that dev
+   email in `STAFF_BOOTSTRAP_ADMINS` so it provisions.
 
 ## Database
 

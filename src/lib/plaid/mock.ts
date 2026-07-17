@@ -1,3 +1,4 @@
+import { webhookDeliveryId } from "./delivery-id";
 import type {
   PlaidClient,
   RecipientInput,
@@ -72,13 +73,14 @@ export class MockPlaidClient implements PlaidClient {
         new_payment_status?: string;
         webhook_type?: string;
         event_id?: string;
+        timestamp?: string;
       };
       return {
         verified: true,
         type: parsed.webhook_type ?? "PAYMENT_INITIATION",
         paymentId: parsed.payment_id ?? null,
         newStatus: parsed.new_payment_status ?? null,
-        eventId: parsed.event_id ?? parsed.payment_id ?? null,
+        eventId: webhookDeliveryId(parsed),
       };
     } catch {
       return { verified: false, type: null, paymentId: null, newStatus: null, eventId: null };

@@ -1,3 +1,4 @@
+import { webhookDeliveryId } from "./delivery-id";
 import type {
   PlaidClient,
   RecipientInput,
@@ -220,9 +221,15 @@ export class RealPlaidClient implements PlaidClient {
 
       const claims = JSON.parse(b64urlToText(payloadB64)) as {
         request_body_sha256?: string;
+        iat?: number;
       };
+      // Body binding is mandatory: reject if the claim is missing or mismatched.
       const bodyHash = await sha256HexLocal(rawBody);
-      if (claims.request_body_sha256 && claims.request_body_sha256 !== bodyHash) {
+      if (!claims.request_body_sha256 || claims.request_body_sha256 !== bodyHash) {
+        return empty;
+      }
+      // Reject stale tokens (replay window) — 5 minutes.
+      if (claims.iat && Math.abs(Date.now() / 1000 - claims.iat) > 300) {
         return empty;
       }
 
@@ -231,13 +238,14 @@ export class RealPlaidClient implements PlaidClient {
         new_payment_status?: string;
         webhook_type?: string;
         event_id?: string;
+        timestamp?: string;
       };
       return {
         verified: true,
         type: parsed.webhook_type ?? null,
         paymentId: parsed.payment_id ?? null,
         newStatus: parsed.new_payment_status ?? null,
-        eventId: parsed.event_id ?? parsed.payment_id ?? null,
+        eventId: webhookDeliveryId(parsed),
       };
     } catch {
       return empty;

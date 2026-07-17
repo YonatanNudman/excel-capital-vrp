@@ -64,11 +64,15 @@ export async function executePaymentNowAction(
     seq: paymentsMade + 1,
   });
 
+  // Stable per-form-render nonce makes double-submits idempotent (same key ->
+  // DB rejects the duplicate). Falls back to a fresh id if none supplied.
+  const nonce = String(fd.get("nonce") ?? "") || newId();
+
   const outcome = await collectPayment(db, getPlaidClient(env), env.APP_ENCRYPTION_KEY, {
     borrowerId,
     amountMinor,
     reference,
-    idempotencyKey: manualKey(borrowerId, newId()),
+    idempotencyKey: manualKey(borrowerId, nonce),
     actorStaffId: user.id,
   });
 

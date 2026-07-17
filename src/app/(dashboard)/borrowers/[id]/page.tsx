@@ -93,7 +93,7 @@ export default async function BorrowerProfile({
 
       {canOperate && (
         <div className="mb-6 flex flex-wrap items-start gap-3 rounded-lg border border-slate-200 bg-white p-4">
-          <ExecuteNowButton borrowerId={borrower.id} />
+          <ExecuteNowButton borrowerId={borrower.id} nonce={crypto.randomUUID()} />
           <SetupLinkButton borrowerId={borrower.id} />
           <form action={setBorrowerStatusAction}>
             <input type="hidden" name="borrowerId" value={borrower.id} />

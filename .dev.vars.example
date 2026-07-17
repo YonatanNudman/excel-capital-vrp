@@ -23,3 +23,8 @@ SETUP_LINK_SIGNING_SECRET=
 # --- Encryption ---
 APP_ENCRYPTION_KEY=
 CRON_SECRET=
+
+# --- Cloudflare Access (required in deployed envs; blank for local dev) ---
+ACCESS_TEAM_DOMAIN=
+ACCESS_AUD=
+STAFF_BOOTSTRAP_ADMINS=

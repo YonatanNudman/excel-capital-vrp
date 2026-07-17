@@ -42,7 +42,13 @@ export function SetupLinkButton({ borrowerId }: { borrowerId: string }) {
   );
 }
 
-export function ExecuteNowButton({ borrowerId }: { borrowerId: string }) {
+export function ExecuteNowButton({
+  borrowerId,
+  nonce,
+}: {
+  borrowerId: string;
+  nonce: string;
+}) {
   const [state, formAction, pending] = useActionState<ActionState, FormData>(
     executePaymentNowAction,
     null,
@@ -51,6 +57,7 @@ export function ExecuteNowButton({ borrowerId }: { borrowerId: string }) {
     <div>
       <form action={formAction}>
         <input type="hidden" name="borrowerId" value={borrowerId} />
+        <input type="hidden" name="nonce" value={nonce} />
         <button
           type="submit"
           disabled={pending}

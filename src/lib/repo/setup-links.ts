@@ -23,12 +23,17 @@ export async function insertSetupLink(
     .first<SetupLink>())!;
 }
 
+/**
+ * Look up a live (unused) setup link by token hash. Used links — whether
+ * consumed on completion or invalidated when a newer link was issued — are
+ * excluded, enforcing single-use and revocation.
+ */
 export async function getSetupLinkByHash(
   db: D1Database,
   tokenHash: string,
 ): Promise<SetupLink | null> {
   return db
-    .prepare("SELECT * FROM setup_links WHERE token_hash = ?")
+    .prepare("SELECT * FROM setup_links WHERE token_hash = ? AND used_at IS NULL")
     .bind(tokenHash)
     .first<SetupLink>();
 }
