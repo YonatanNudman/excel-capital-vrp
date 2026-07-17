@@ -1,0 +1,81 @@
+/**
+ * Wrangler config for the Excel Capital VRP platform.
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ *
+ * Secrets (PLAID_SECRET, etc.) are NOT here. Local: .dev.vars. Prod: `wrangler secret put`.
+ * NOTE: staging/production currently point at the same D1 id as dev. Create
+ * dedicated per-environment D1 databases before go-live (see IMPLEMENTATION-PLAN Stage 5).
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "excel-capital-vrp",
+	"main": ".open-next/worker.js",
+	"compatibility_date": "2026-07-17",
+	"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+	"assets": {
+		"binding": "ASSETS",
+		"directory": ".open-next/assets"
+	},
+	"images": {
+		"binding": "IMAGES"
+	},
+	"services": [
+		{
+			"binding": "WORKER_SELF_REFERENCE",
+			"service": "excel-capital-vrp"
+		}
+	],
+	"observability": {
+		"enabled": true
+	},
+	"upload_source_maps": true,
+
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "excel-capital-vrp",
+			"database_id": "02118551-a7a3-406c-a9ed-786e893ade96",
+			"migrations_dir": "migrations"
+		}
+	],
+
+	"vars": {
+		"PLAID_ENV": "sandbox",
+		"APP_ENV": "development"
+	},
+
+	// Daily collection sweep at 06:00 UTC. Guarded server-side: a no-op until
+	// schedules exist and (production) the owner has approved go-live.
+	"triggers": {
+		"crons": ["0 6 * * *"]
+	},
+
+	"env": {
+		"staging": {
+			"name": "excel-capital-vrp-staging",
+			"vars": { "PLAID_ENV": "sandbox", "APP_ENV": "staging" },
+			"d1_databases": [
+				{
+					"binding": "DB",
+					"database_name": "excel-capital-vrp",
+					"database_id": "02118551-a7a3-406c-a9ed-786e893ade96",
+					"migrations_dir": "migrations"
+				}
+			],
+			"triggers": { "crons": ["0 6 * * *"] }
+		},
+		"production": {
+			"name": "excel-capital-vrp-prod",
+			"vars": { "PLAID_ENV": "production", "APP_ENV": "production" },
+			"d1_databases": [
+				{
+					"binding": "DB",
+					"database_name": "excel-capital-vrp",
+					"database_id": "02118551-a7a3-406c-a9ed-786e893ade96",
+					"migrations_dir": "migrations"
+				}
+			],
+			"triggers": { "crons": ["0 6 * * *"] }
+		}
+	}
+}

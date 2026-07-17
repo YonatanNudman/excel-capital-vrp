@@ -42,3 +42,6 @@ npm-debug.log*
 # Local D1 / SQLite scratch
 *.sqlite
 *.sqlite-*
+
+# TS build info
+*.tsbuildinfo
