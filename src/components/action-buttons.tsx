@@ -35,6 +35,9 @@ export function SetupLinkButton({ borrowerId }: { borrowerId: string }) {
         <div className="mt-2 rounded-md bg-slate-50 p-2 text-xs">
           <div className="mb-1 text-slate-500">Share this single-use link (expires in 72h):</div>
           <code className="break-all text-slate-800">{state.url}</code>
+          {state.emailed && (
+            <div className="mt-1 text-slate-500">Emailed to borrower</div>
+          )}
         </div>
       )}
       {state?.error && <p className="mt-1 text-xs text-red-600">{state.error}</p>}

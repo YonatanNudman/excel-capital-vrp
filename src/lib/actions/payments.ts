@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getDb, getEnv } from "@/lib/db";
 import { requireRole } from "@/lib/auth";
 import { getPlaidClient } from "@/lib/plaid";
+import { getMailer, type MailerEnv } from "@/lib/mailer";
 import { collectPayment, type CollectOutcome } from "@/lib/engine/collect";
 import { getActiveSchedule } from "@/lib/repo/schedules";
 import { getSettings } from "@/lib/repo/settings";
@@ -68,13 +69,19 @@ export async function executePaymentNowAction(
   // DB rejects the duplicate). Falls back to a fresh id if none supplied.
   const nonce = String(fd.get("nonce") ?? "") || newId();
 
-  const outcome = await collectPayment(db, getPlaidClient(env), env.APP_ENCRYPTION_KEY, {
-    borrowerId,
-    amountMinor,
-    reference,
-    idempotencyKey: manualKey(borrowerId, nonce),
-    actorStaffId: user.id,
-  });
+  const outcome = await collectPayment(
+    db,
+    getPlaidClient(env),
+    env.APP_ENCRYPTION_KEY,
+    {
+      borrowerId,
+      amountMinor,
+      reference,
+      idempotencyKey: manualKey(borrowerId, nonce),
+      actorStaffId: user.id,
+    },
+    getMailer(env as MailerEnv),
+  );
 
   revalidatePath(`/borrowers/${borrowerId}`);
   revalidatePath("/payments");
@@ -110,15 +117,21 @@ export async function retryPaymentAction(
     return { message: `Retry limit (${settings.default_retry_max}) reached.` };
   }
 
-  const outcome = await collectPayment(db, getPlaidClient(env), env.APP_ENCRYPTION_KEY, {
-    borrowerId: original.borrower_id,
-    amountMinor: original.amount_minor,
-    currency: original.currency,
-    reference: original.reference ?? "",
-    idempotencyKey: retryKey(rootId, attempt),
-    retryOf: rootId,
-    actorStaffId: user.id,
-  });
+  const outcome = await collectPayment(
+    db,
+    getPlaidClient(env),
+    env.APP_ENCRYPTION_KEY,
+    {
+      borrowerId: original.borrower_id,
+      amountMinor: original.amount_minor,
+      currency: original.currency,
+      reference: original.reference ?? "",
+      idempotencyKey: retryKey(rootId, attempt),
+      retryOf: rootId,
+      actorStaffId: user.id,
+    },
+    getMailer(env as MailerEnv),
+  );
 
   revalidatePath(`/borrowers/${original.borrower_id}`);
   revalidatePath("/payments");

@@ -1,8 +1,12 @@
 import type { PlaidClient } from "@/lib/plaid";
 import { recordWebhookEvent, markWebhookProcessed } from "@/lib/repo/webhooks";
 import { getPaymentByPlaidId, updatePaymentStatus } from "@/lib/repo/payments";
+import { getBorrower } from "@/lib/repo/borrowers";
 import { writeAudit } from "@/lib/repo/audit";
 import { mapPlaidStatus, canTransition } from "@/lib/payment-state";
+import type { Mailer } from "@/lib/mailer";
+import { receiptEmail, failureEmail } from "@/lib/mailer/templates";
+import type { Payment } from "@/lib/types";
 
 export type WebhookResult =
   | { status: "duplicate" }
@@ -20,6 +24,7 @@ export async function processWebhook(
   plaid: PlaidClient,
   rawBody: string,
   headers: Headers,
+  mailer?: Mailer,
 ): Promise<WebhookResult> {
   const v = await plaid.verifyWebhook(rawBody, headers);
 
@@ -78,6 +83,57 @@ export async function processWebhook(
     entityId: payment.id,
     metadata: { from: payment.status, to: internal, plaidStatus: v.newStatus },
   });
+
+  // Notify the borrower on terminal outcomes. Email is best-effort and must never
+  // affect the webhook result: a settled receipt or a failure notice.
+  if (mailer) {
+    if (internal === "settled") {
+      await notifyBorrower(db, mailer, payment, "email.receipt", (borrowerName) =>
+        receiptEmail({
+          borrowerName,
+          amountMinor: payment.amount_minor,
+          currency: payment.currency,
+          reference: payment.reference ?? "",
+          date: new Date().toISOString().slice(0, 10),
+        }),
+      );
+    } else if (internal === "failed" || internal === "rejected") {
+      await notifyBorrower(db, mailer, payment, "email.failure", (borrowerName) =>
+        failureEmail({
+          borrowerName,
+          amountMinor: payment.amount_minor,
+          currency: payment.currency,
+          reference: payment.reference ?? "",
+        }),
+      );
+    }
+  }
+
   await markWebhookProcessed(db, rec.id);
   return { status: "applied", paymentId: payment.id, from: payment.status, to: internal };
+}
+
+/**
+ * Send one borrower email for a payment and audit the attempt. Skips silently
+ * when the borrower has no contact_email. Never throws.
+ */
+async function notifyBorrower(
+  db: D1Database,
+  mailer: Mailer,
+  payment: Payment,
+  action: "email.receipt" | "email.failure",
+  build: (borrowerName: string) => { subject: string; text: string },
+): Promise<void> {
+  const borrower = await getBorrower(db, payment.borrower_id);
+  if (!borrower?.contact_email) return;
+
+  const { subject, text } = build(borrower.legal_name);
+  const result = await mailer.send({ to: borrower.contact_email, subject, text });
+  await writeAudit(db, {
+    actorStaffId: null,
+    action,
+    entityType: "payment",
+    entityId: payment.id,
+    metadata: { mode: mailer.mode, ok: result.ok, to: borrower.contact_email },
+  });
 }
