@@ -4,6 +4,24 @@ Staged, reviewable, test-first for money/security logic. Each stage is
 independently demoable in sandbox. Nothing touches production Plaid until the
 owner approves after sandbox testing.
 
+## Progress (2026-07-17)
+
+- Stage 0 — DONE. Scaffold, D1 schema, domain logic, evals.
+- Stage 1 — DONE. Borrower CRUD, dashboard, roles, audit.
+- Stage 2 — DONE. Setup links, Plaid recipient/consent/link-token provisioning,
+  public setup page + Link launcher, completion, re-consent path. (Mock Plaid.)
+- Stage 3 — DONE. collectPayment engine (idempotent), webhook receiver, manual
+  execute + retry. (Mock Plaid.)
+- Stage 4 — DONE. Cron collection sweep via custom worker scheduled handler +
+  authenticated /api/cron/run; consent-expiry monitoring; reconciliation view.
+- Stage 5 — REMAINING (needs humans): real Plaid sandbox credentials, Cloudflare
+  Access setup, deploy to staging, end-to-end sandbox test, security review
+  sign-off, then owner's explicit production approval.
+
+The entire app runs end-to-end today with a MOCK Plaid client (auto-activates
+when Plaid credentials are absent). 42 automated tests pass (32 unit + 10 D1
+integration). Verified: tsc, wrangler dry-run bundle, local runtime smoke.
+
 ## Model & effort routing
 
 Rule: **Opus for anything where a mistake moves money or breaks security;
