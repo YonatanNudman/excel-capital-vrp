@@ -103,15 +103,32 @@ Worker secrets `ACCESS_AUD` + `ACCESS_TEAM_DOMAIN` are set;
 
 Open: https://excel-capital-vrp-staging.excel-capital.workers.dev/borrowers
 
-Note: Access currently covers the whole hostname, so public borrower setup
-links and inbound Plaid webhooks are also gated until path bypasses are added.
-Cron triggers still invoke the Worker directly.
+### Access path bypasses (done 2026-07-24)
 
-Before any external sandbox test, create narrowly scoped Access applications or
-path policies that bypass Access only for `/api/webhooks/plaid` and
-`/setup/*`. The webhook remains protected by Plaid JWT verification and a 64 KiB
-body limit; setup remains protected by a hashed, single-use, expiring token.
-Do not bypass Access for dashboard or export paths.
+Two narrowly scoped Access applications bypass Access on exactly the paths that
+external parties must reach. More specific paths win over the host-wide app.
+
+| Access app | Scoped path | Policy |
+|---|---|---|
+| Excel Capital VRP Staging | whole hostname | allow, staff emails only |
+| Plaid Webhook Bypass | `/api/webhooks/plaid` | bypass, everyone |
+| Borrower Setup Bypass | `/setup` (and subpaths) | bypass, everyone |
+
+Neither bypass weakens a real control: the webhook is still authenticated by
+Plaid JWT verification plus a 64 KiB body limit, and setup links are still
+hashed, single-use and expiring. Access was only ever blocking reachability.
+Do NOT bypass Access for dashboard or export paths. Verify after any change:
+
+```
+# expect an Access redirect (302 to cloudflareaccess.com)
+curl -sI <host>/borrowers <host>/api/payments/export
+# expect to reach the Worker (no Access redirect)
+curl -s <host>/setup/bogus ; curl -s -X POST <host>/api/webhooks/plaid -d '{}'
+```
+
+Policy changes take a few minutes to propagate across edge colos, so expect
+mixed results immediately after editing. Cron triggers invoke the Worker
+directly and are unaffected by Access.
 
 For a custom production hostname later: add a zone, attach a Custom Domain to
 the Worker, create a matching Access app, and disable the public workers.dev
@@ -121,6 +138,8 @@ route.
 
 Do NOT set `PLAID_ENV=production` or production Plaid secrets until:
 - Migration `0003_payment_safety.sql` has been applied to that environment.
+  (Applied to staging D1 `excel-capital-vrp-staging` on 2026-07-24. Production
+  D1 `excel-capital-vrp-prod` still needs it before its first deploy.)
 - Full sandbox flow tested (setup → consent → execute → webhook → settle).
 - Timeout-after-submit recovery has been observed via reconciliation without a
   second payment.
