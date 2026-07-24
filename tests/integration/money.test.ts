@@ -1,7 +1,10 @@
 import { env } from "cloudflare:workers";
 import { describe, it, expect } from "vitest";
 import { MockPlaidClient } from "@/lib/plaid/mock";
+import { PlaidTransportError } from "@/lib/plaid";
 import { collectPayment } from "@/lib/engine/collect";
+import { reconcilePayments } from "@/lib/engine/reconcile";
+import { runAutoRetries } from "@/lib/engine/auto-retry";
 import { processWebhook } from "@/lib/engine/webhook";
 import { runDueCollections } from "@/lib/engine/cron";
 import { runConsentMaintenance } from "@/lib/engine/consent-maintenance";
@@ -14,7 +17,7 @@ import {
 } from "@/lib/repo/consents";
 import { upsertSchedule } from "@/lib/repo/schedules";
 import { getPayment, getPaymentByPlaidId } from "@/lib/repo/payments";
-import { encryptString } from "@/lib/crypto";
+import { encryptString, sha256Hex } from "@/lib/crypto";
 import { manualKey } from "@/lib/idempotency";
 import { newId } from "@/lib/ids";
 
@@ -34,12 +37,14 @@ async function seedBorrower(opts: { authorized?: boolean } = {}) {
     currency: "GBP",
     maxPaymentAmountMinor: 100000,
   });
+  const plaidConsentId = `mock-consent-${b.id}`;
   await attachPlaidConsent(env.DB, consent.id, {
-    plaidConsentIdEncrypted: await encryptString("mock-consent-1", KEY),
+    plaidConsentIdEncrypted: await encryptString(plaidConsentId, KEY),
+    plaidConsentIdHash: await sha256Hex(plaidConsentId),
     plaidRecipientId: "mock-recipient-1",
   });
   if (opts.authorized !== false) await setConsentStatus(env.DB, consent.id, "authorized");
-  return { borrower: b, consent };
+  return { borrower: b, consent, plaidConsentId };
 }
 
 describe("runConsentMaintenance", () => {
@@ -141,6 +146,62 @@ describe("collectPayment (D1 + mock Plaid)", () => {
     expect(out.kind).toBe("skipped");
     if (out.kind === "skipped") expect(out.reason).toContain("paused");
   });
+
+  it("quarantines a transport timeout and never auto-retries it", async () => {
+    const uncertain = new MockPlaidClient();
+    uncertain.executePayment = async () => {
+      throw new PlaidTransportError("connection closed after request upload");
+    };
+    const { borrower } = await seedBorrower();
+    const out = await collectPayment(env.DB, uncertain, KEY, {
+      borrowerId: borrower.id,
+      amountMinor: 5000,
+      reference: "TIMEOUT1",
+      idempotencyKey: manualKey(borrower.id, newId()),
+      actorStaffId: null,
+    });
+    expect(out.kind).toBe("unknown");
+    if (out.kind !== "unknown") throw new Error("expected unknown payment");
+    expect((await getPayment(env.DB, out.payment.id))?.status).toBe("unknown");
+
+    const retries = await runAutoRetries(env.DB, plaid, KEY, new Date("2030-01-01T00:00:00Z"));
+    expect(retries.considered).toBe(0);
+  });
+
+  it("recovers a lost execute response by exact provider reference", async () => {
+    const recovering = new MockPlaidClient();
+    recovering.executePayment = async () => {
+      throw new PlaidTransportError("response lost");
+    };
+    recovering.listPayments = async () => [{
+      paymentId: "provider-recovered-1",
+      status: "PAYMENT_STATUS_INITIATED",
+      reference: "RECOVER1",
+      amountMinor: 5000,
+      currency: "GBP",
+    }];
+    const { borrower } = await seedBorrower();
+    const out = await collectPayment(env.DB, recovering, KEY, {
+      borrowerId: borrower.id,
+      amountMinor: 5000,
+      reference: "RECOVER1",
+      idempotencyKey: manualKey(borrower.id, newId()),
+      actorStaffId: null,
+    });
+    expect(out.kind).toBe("unknown");
+
+    const summary = await reconcilePayments(
+      env.DB,
+      recovering,
+      KEY,
+      new Date(Date.now() + 120_000),
+    );
+    expect(summary.updated).toBeGreaterThanOrEqual(1);
+    if (out.kind !== "unknown") throw new Error("expected unknown payment");
+    const recovered = await getPayment(env.DB, out.payment.id);
+    expect(recovered?.plaid_payment_id).toBe("provider-recovered-1");
+    expect(recovered?.status).toBe("initiated");
+  });
 });
 
 describe("processWebhook (D1 + mock Plaid)", () => {
@@ -199,12 +260,42 @@ describe("processWebhook (D1 + mock Plaid)", () => {
   });
 
   it("rejects an unverified (malformed) webhook without changing state", async () => {
+    const before = await env.DB.prepare("SELECT COUNT(*) AS n FROM webhook_events")
+      .first<{ n: number }>();
     const pid = await collectOne();
     const res = await processWebhook(env.DB, plaid, "not json", new Headers());
     expect(res.status).toBe("unverified");
+    const after = await env.DB.prepare("SELECT COUNT(*) AS n FROM webhook_events")
+      .first<{ n: number }>();
+    expect(after?.n).toBe(before?.n);
     // A later genuine delivery is still processed (dedupe not poisoned).
     const ok = await processWebhook(env.DB, plaid, webhook(pid, "PAYMENT_STATUS_SETTLED"), new Headers());
     expect(ok.status).toBe("applied");
+  });
+
+  it("leaves an early unknown-payment webhook replayable", async () => {
+    const body = webhook("not-persisted-yet", "PAYMENT_STATUS_EXECUTED", "evt-early");
+    const first = await processWebhook(env.DB, plaid, body, new Headers());
+    const second = await processWebhook(env.DB, plaid, body, new Headers());
+    expect(first.status).toBe("retry");
+    expect(second.status).toBe("retry");
+    const event = await env.DB.prepare("SELECT processed_at FROM webhook_events WHERE id = ?")
+      .bind("evt-early")
+      .first<{ processed_at: string | null }>();
+    expect(event?.processed_at).toBeNull();
+  });
+
+  it("applies consent revocation and blocks the borrower", async () => {
+    const { borrower, consent, plaidConsentId } = await seedBorrower();
+    const body = JSON.stringify({
+      webhook_type: "PAYMENT_INITIATION",
+      consent_id: plaidConsentId,
+      new_consent_status: "REVOKED",
+      event_id: `consent-revoked-${consent.id}`,
+    });
+    const result = await processWebhook(env.DB, plaid, body, new Headers());
+    expect(result.status).toBe("consent_applied");
+    expect((await getBorrower(env.DB, borrower.id))?.status).toBe("revoked");
   });
 
   // Eval: a late 'failed' after 'settled' (terminal) is ignored.

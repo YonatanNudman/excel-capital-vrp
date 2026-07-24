@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import {
   sendSetupLinkAction,
   type SetupLinkState,
@@ -48,26 +48,50 @@ export function SetupLinkButton({ borrowerId }: { borrowerId: string }) {
 export function ExecuteNowButton({
   borrowerId,
   nonce,
+  amountLabel,
 }: {
   borrowerId: string;
   nonce: string;
+  amountLabel: string;
 }) {
+  const [confirming, setConfirming] = useState(false);
   const [state, formAction, pending] = useActionState<ActionState, FormData>(
     executePaymentNowAction,
     null,
   );
   return (
     <div>
-      <form action={formAction}>
+      <form action={formAction} className="flex flex-wrap items-center gap-2">
         <input type="hidden" name="borrowerId" value={borrowerId} />
         <input type="hidden" name="nonce" value={nonce} />
-        <button
-          type="submit"
-          disabled={pending}
-          className={`${btn} bg-slate-900 text-white hover:bg-slate-700`}
-        >
-          {pending ? "Submitting…" : "Execute payment now"}
-        </button>
+        {confirming ? (
+          <>
+            <span className="text-sm font-medium text-amber-800">Collect {amountLabel} now?</span>
+            <button
+              type="submit"
+              disabled={pending}
+              className={`${btn} bg-red-700 text-white hover:bg-red-600`}
+            >
+              {pending ? "Submitting…" : "Confirm collection"}
+            </button>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => setConfirming(false)}
+              className={`${btn} border border-slate-300 bg-white hover:bg-slate-50`}
+            >
+              Cancel
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            className={`${btn} bg-slate-900 text-white hover:bg-slate-700`}
+          >
+            Execute payment now
+          </button>
+        )}
       </form>
       {state?.message && <p className="mt-1 text-xs text-slate-600">{state.message}</p>}
     </div>

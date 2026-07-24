@@ -7,10 +7,14 @@
  * `.open-next/worker.js`; we import its fetch handler and re-export its cache
  * Durable Objects so wrangler can resolve them.
  */
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - .open-next/worker.js is generated at build time (absent in fresh checkouts)
 import openNextHandler from "./.open-next/worker.js";
 import { runDueCollectionsFromEnv } from "@/lib/engine/cron";
 
+export { BorrowerPaymentCoordinator } from "@/lib/durable/borrower-payment-coordinator";
+
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - generated at build time
 export { DOQueueHandler, DOShardedTagCache, BucketCachePurge } from "./.open-next/worker.js";
 

@@ -8,7 +8,7 @@ describe("buildReference", () => {
       seq: 3,
       date: "20260201",
     });
-    expect(ref).toBe("EXCEL-ACME-3");
+    expect(ref).toBe("EXCELACME3");
   });
 
   it("trims to Plaid's 18-char BACS limit", () => {

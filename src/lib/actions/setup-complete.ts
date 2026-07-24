@@ -7,8 +7,7 @@ import {
   getSetupLinkByHash,
   markSetupLinkUsed,
 } from "@/lib/repo/setup-links";
-import { getActiveConsent, setConsentStatus } from "@/lib/repo/consents";
-import { setBorrowerStatus } from "@/lib/repo/borrowers";
+import { getActiveConsent } from "@/lib/repo/consents";
 import { writeAudit } from "@/lib/repo/audit";
 import { confirmConsent } from "@/lib/engine/setup";
 
@@ -37,17 +36,24 @@ export async function completeSetupAction(
   const consent = await getActiveConsent(db, link.borrower_id);
   if (!consent) return { done: false, message: "No consent to confirm." };
   if (consent.status === "authorized") {
+    await markSetupLinkUsed(db, link.id);
     return { done: true, message: "Already authorised. You're all set." };
   }
 
   const { status } = await confirmConsent(getPlaidClient(env), env.APP_ENCRYPTION_KEY, consent);
-  if (status !== "AUTHORISED") {
-    return { done: false, message: `Authorization not complete (status: ${status}).` };
+  if (status !== "AUTHORISED" && status !== "AUTHORIZED") {
+    return { done: false, message: "Authorization is not complete. Please try again." };
   }
 
-  await setConsentStatus(db, consent.id, "authorized");
-  await setBorrowerStatus(db, link.borrower_id, "active");
-  await markSetupLinkUsed(db, link.id);
+  const now = new Date().toISOString();
+  await db.batch([
+    db.prepare("UPDATE consents SET status = 'authorized', authorized_at = ? WHERE id = ?")
+      .bind(now, consent.id),
+    db.prepare("UPDATE borrowers SET status = 'active' WHERE id = ?")
+      .bind(link.borrower_id),
+    db.prepare("UPDATE setup_links SET used_at = ? WHERE id = ? AND used_at IS NULL")
+      .bind(now, link.id),
+  ]);
   await writeAudit(db, {
     actorStaffId: null,
     action: "consent.authorized",

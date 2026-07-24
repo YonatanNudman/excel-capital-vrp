@@ -93,21 +93,42 @@ subdomain: `excel-capital.workers.dev`.
 - Set secrets per env: `wrangler secret bulk secrets.json --env <env>` (never
   commit that file) or `wrangler secret put NAME --env <env>`.
 
-## Make staging usable (requires dashboard + a domain)
+## Make staging usable (Access on workers.dev, done 2026-07-20)
 
-The deployed staging app is secure-by-default (locked) until Access is set up.
-To make it usable/demoable to staff you need:
-1. Add a domain (zone) to this Cloudflare account (the app cannot sit behind
-   Access on a `*.workers.dev` URL). Route the Worker to a hostname on that zone.
-2. Enable Zero Trust Access in the dashboard (one-time "Enable Access").
-3. Create a self-hosted Access application for that hostname + a policy allowing
-   staff emails; then set `ACCESS_AUD` and `ACCESS_TEAM_DOMAIN` as Worker
-   secrets (see "Staff auth" above) and redeploy.
-Until then, review the UI locally with `wrangler dev` / `npm run dev`.
+Staging is behind Cloudflare Access on the workers.dev URL (no custom domain
+required). Zero Trust org: `excel-capital-zt.cloudflareaccess.com`. Login is
+one-time PIN email. Allowed / bootstrap admin: `nudman.yonatan@gmail.com`.
+Worker secrets `ACCESS_AUD` + `ACCESS_TEAM_DOMAIN` are set;
+`STAFF_BOOTSTRAP_ADMINS` provisions that admin on first login.
+
+Open: https://excel-capital-vrp-staging.excel-capital.workers.dev/borrowers
+
+Note: Access currently covers the whole hostname, so public borrower setup
+links and inbound Plaid webhooks are also gated until path bypasses are added.
+Cron triggers still invoke the Worker directly.
+
+Before any external sandbox test, create narrowly scoped Access applications or
+path policies that bypass Access only for `/api/webhooks/plaid` and
+`/setup/*`. The webhook remains protected by Plaid JWT verification and a 64 KiB
+body limit; setup remains protected by a hashed, single-use, expiring token.
+Do not bypass Access for dashboard or export paths.
+
+For a custom production hostname later: add a zone, attach a Custom Domain to
+the Worker, create a matching Access app, and disable the public workers.dev
+route.
 
 ## Plaid go-live gate
 
 Do NOT set `PLAID_ENV=production` or production Plaid secrets until:
+- Migration `0003_payment_safety.sql` has been applied to that environment.
 - Full sandbox flow tested (setup → consent → execute → webhook → settle).
+- Timeout-after-submit recovery has been observed via reconciliation without a
+  second payment.
 - All scenario evals pass in CI.
 - Owner (Yonatan) has explicitly approved production.
+
+`COLLECTIONS_ENABLED` is a separate final kill switch and defaults to `false` in
+all Wrangler environments. Keep it false while applying migrations and running
+read-only checks. Set it to `true` only after the items above are complete, then
+deploy. Setting it back to `false` immediately blocks manual, scheduled, and
+retry execution while leaving webhook processing and reconciliation active.

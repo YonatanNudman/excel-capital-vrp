@@ -39,6 +39,20 @@ export async function createPendingConsent(
   borrowerId: string,
   limits: ConsentLimits,
 ): Promise<Consent> {
+  for (const amount of [limits.maxPaymentAmountMinor, limits.periodicMaxAmountMinor]) {
+    if (amount != null && (!Number.isSafeInteger(amount) || amount <= 0)) {
+      throw new Error("consent limits must be positive integer minor-unit amounts");
+    }
+  }
+  if (limits.validFrom && Number.isNaN(Date.parse(limits.validFrom))) {
+    throw new Error("invalid consent start date");
+  }
+  if (limits.validTo && Number.isNaN(Date.parse(limits.validTo))) {
+    throw new Error("invalid consent end date");
+  }
+  if (limits.validFrom && limits.validTo && Date.parse(limits.validTo) <= Date.parse(limits.validFrom)) {
+    throw new Error("consent end date must be after its start date");
+  }
   const id = newId();
   await db
     .prepare(
@@ -68,19 +82,53 @@ export async function attachPlaidConsent(
   data: {
     plaidConsentIdEncrypted: string;
     plaidRecipientId: string;
+    plaidConsentIdHash?: string | null;
     rawConstraints?: unknown;
   },
 ): Promise<void> {
   await db
     .prepare(
-      `UPDATE consents SET plaid_consent_id = ?, plaid_recipient_id = ?, raw_constraints = ? WHERE id = ?`,
+      `UPDATE consents SET plaid_consent_id = ?, plaid_consent_id_hash = ?,
+         plaid_recipient_id = ?, raw_constraints = ? WHERE id = ?`,
     )
     .bind(
       data.plaidConsentIdEncrypted,
+      data.plaidConsentIdHash ?? null,
       data.plaidRecipientId,
       data.rawConstraints != null ? JSON.stringify(data.rawConstraints) : null,
       id,
     )
+    .run();
+}
+
+export async function getConsentByPlaidHash(
+  db: D1Database,
+  hash: string,
+): Promise<Consent | null> {
+  return db
+    .prepare("SELECT * FROM consents WHERE plaid_consent_id_hash = ?")
+    .bind(hash)
+    .first<Consent>();
+}
+
+export async function listConsentsMissingPlaidHash(db: D1Database): Promise<Consent[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT * FROM consents
+       WHERE plaid_consent_id IS NOT NULL AND plaid_consent_id_hash IS NULL
+       LIMIT 500`,
+    )
+    .all<Consent>();
+  return results ?? [];
+}
+
+export async function setConsentPlaidHash(
+  db: D1Database,
+  id: string,
+  hash: string,
+): Promise<void> {
+  await db.prepare("UPDATE consents SET plaid_consent_id_hash = ? WHERE id = ?")
+    .bind(hash, id)
     .run();
 }
 

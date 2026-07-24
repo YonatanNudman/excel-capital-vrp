@@ -9,6 +9,7 @@ import type {
   ExecutePaymentResult,
   ExecutePaymentInput,
   GetPaymentResult,
+  ListedPayment,
   GetConsentResult,
   WebhookVerification,
 } from "./types";
@@ -22,12 +23,6 @@ export interface RealPlaidConfig {
   clientId: string;
   secret: string;
   env: string; // "sandbox" | "production"
-  /**
-   * VRP consent scope. Borrower-to-lender is a third-party arrangement; the
-   * exact scope value MUST be confirmed against Excel's Plaid setup before
-   * go-live. Defaulted, not guessed as final.
-   */
-  scope?: string;
 }
 
 /**
@@ -46,26 +41,42 @@ export class RealPlaidClient implements PlaidClient {
     this.base = BASE_URLS[cfg.env] ?? BASE_URLS.sandbox;
   }
 
-  private async call<T>(path: string, body: Record<string, unknown>): Promise<T> {
-    const res = await fetch(`${this.base}${path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        client_id: this.cfg.clientId,
-        secret: this.cfg.secret,
-        ...body,
-      }),
-    });
-    const json = (await res.json()) as Record<string, unknown>;
-    if (!res.ok) {
-      const err = json as { error_code?: string; error_message?: string };
-      throw new PlaidApiError(
-        err.error_code ?? "PLAID_ERROR",
-        err.error_message ?? `HTTP ${res.status}`,
-        res.status,
+  private async call(path: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    let res: Response;
+    try {
+      res = await fetch(`${this.base}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: this.cfg.clientId,
+          secret: this.cfg.secret,
+          ...body,
+        }),
+        signal: AbortSignal.timeout(8_000),
+      });
+    } catch (error) {
+      throw new PlaidTransportError(error instanceof Error ? error.message : String(error));
+    }
+
+    let json: Record<string, unknown>;
+    try {
+      const parsed: unknown = await res.json();
+      if (!isRecord(parsed)) throw new Error("response was not an object");
+      json = parsed;
+    } catch (error) {
+      throw new PlaidTransportError(
+        `unreadable Plaid response (${res.status}): ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    return json as T;
+    if (!res.ok) {
+      throw new PlaidApiError(
+        readOptionalString(json, "error_code") ?? "PLAID_ERROR",
+        readOptionalString(json, "error_message") ?? `HTTP ${res.status}`,
+        res.status,
+        readOptionalString(json, "request_id"),
+      );
+    }
+    return json;
   }
 
   async createRecipient(input: RecipientInput): Promise<CreateRecipientResult> {
@@ -73,11 +84,8 @@ export class RealPlaidClient implements PlaidClient {
     if (input.accountNumber && input.sortCode) {
       body.bacs = { account: input.accountNumber, sort_code: input.sortCode };
     }
-    const r = await this.call<{ recipient_id: string }>(
-      "/payment_initiation/recipient/create",
-      body,
-    );
-    return { recipientId: r.recipient_id };
+    const r = await this.call("/payment_initiation/recipient/create", body);
+    return { recipientId: readRequiredString(r, "recipient_id") };
   }
 
   async createConsent(
@@ -111,16 +119,13 @@ export class RealPlaidClient implements PlaidClient {
       ];
     }
 
-    const r = await this.call<{ consent_id: string }>(
-      "/payment_initiation/consent/create",
-      {
+    const r = await this.call("/payment_initiation/consent/create", {
         recipient_id: recipientId,
         reference,
-        scopes: [this.cfg.scope ?? "ME_TO_ME"],
+        type: "COMMERCIAL",
         constraints: plaidConstraints,
-      },
-    );
-    return { consentId: r.consent_id, rawConstraints: plaidConstraints };
+      });
+    return { consentId: readRequiredString(r, "consent_id"), rawConstraints: plaidConstraints };
   }
 
   async createLinkToken(params: {
@@ -140,38 +145,73 @@ export class RealPlaidClient implements PlaidClient {
     if (params.webhookUrl) body.webhook = params.webhookUrl;
     if (params.redirectUri) body.redirect_uri = params.redirectUri;
 
-    const r = await this.call<{ link_token: string; expiration: string }>(
-      "/link/token/create",
-      body,
-    );
-    return { linkToken: r.link_token, expiration: r.expiration };
+    const r = await this.call("/link/token/create", body);
+    return {
+      linkToken: readRequiredString(r, "link_token"),
+      expiration: readRequiredString(r, "expiration"),
+    };
   }
 
   async getConsent(consentId: string): Promise<GetConsentResult> {
-    const r = await this.call<{ status: string }>("/payment_initiation/consent/get", {
+    const r = await this.call("/payment_initiation/consent/get", {
       consent_id: consentId,
     });
-    return { consentId, status: r.status };
+    return { consentId, status: readRequiredString(r, "status") };
   }
 
   async executePayment(input: ExecutePaymentInput): Promise<ExecutePaymentResult> {
-    const r = await this.call<{ payment_id: string; status: string }>(
-      "/payment_initiation/consent/payment/execute",
-      {
+    const r = await this.call("/payment_initiation/consent/payment/execute", {
         consent_id: input.consentId,
         amount: { currency: input.currency, value: minorToMajor(input.amountMinor) },
         idempotency_key: input.idempotencyKey,
         reference: input.reference,
-      },
-    );
-    return { paymentId: r.payment_id, status: r.status };
+        processing_mode: "ASYNC",
+      });
+    return {
+      paymentId: readRequiredString(r, "payment_id"),
+      status: readRequiredString(r, "status"),
+      requestId: readOptionalString(r, "request_id"),
+    };
   }
 
   async getPayment(paymentId: string): Promise<GetPaymentResult> {
-    const r = await this.call<{ status: string }>("/payment_initiation/payment/get", {
+    const r = await this.call("/payment_initiation/payment/get", {
       payment_id: paymentId,
     });
-    return { paymentId, status: r.status };
+    return {
+      paymentId,
+      status: readRequiredString(r, "status"),
+      requestId: readOptionalString(r, "request_id"),
+    };
+  }
+
+  async listPayments(consentId: string): Promise<ListedPayment[]> {
+    const r = await this.call("/payment_initiation/payment/list", {
+      consent_id: consentId,
+      count: 200,
+    });
+    const payments = r.payments;
+    if (!Array.isArray(payments)) throw new PlaidTransportError("Plaid payment list was malformed");
+    return payments.flatMap((value): ListedPayment[] => {
+      if (!isRecord(value)) return [];
+      const paymentId = readOptionalString(value, "payment_id");
+      const status = readOptionalString(value, "status");
+      if (!paymentId || !status) return [];
+      const amount = isRecord(value.amount) ? value.amount : null;
+      const rawMajor = amount?.value;
+      const major = typeof rawMajor === "number"
+        ? rawMajor
+        : typeof rawMajor === "string" && rawMajor.trim() !== ""
+          ? Number(rawMajor)
+          : null;
+      return [{
+        paymentId,
+        status,
+        reference: readOptionalString(value, "reference"),
+        amountMinor: major == null || !Number.isFinite(major) ? null : Math.round(major * 100),
+        currency: amount ? readOptionalString(amount, "currency") : null,
+      }];
+    });
   }
 
   /**
@@ -188,6 +228,8 @@ export class RealPlaidClient implements PlaidClient {
       type: null,
       paymentId: null,
       newStatus: null,
+      consentId: null,
+      newConsentStatus: null,
       eventId: null,
     };
     const token = headers.get("plaid-verification");
@@ -198,13 +240,13 @@ export class RealPlaidClient implements PlaidClient {
       const header = JSON.parse(b64urlToText(headerB64)) as { kid: string; alg: string };
       if (header.alg !== "ES256") return empty;
 
-      const keyRes = await this.call<{ key: JsonWebKey }>(
-        "/webhook_verification_key/get",
-        { key_id: header.kid },
-      );
+      const keyRes = await this.call("/webhook_verification_key/get", { key_id: header.kid });
+      if (!isRecord(keyRes.key)) return empty;
+      const expiredAt = keyRes.key.expired_at;
+      if (typeof expiredAt === "number" && expiredAt <= Date.now() / 1000) return empty;
       const key = await crypto.subtle.importKey(
         "jwk",
-        keyRes.key,
+        keyRes.key as JsonWebKey,
         { name: "ECDSA", namedCurve: "P-256" },
         false,
         ["verify"],
@@ -229,7 +271,7 @@ export class RealPlaidClient implements PlaidClient {
         return empty;
       }
       // Reject stale tokens (replay window), 5 minutes.
-      if (claims.iat && Math.abs(Date.now() / 1000 - claims.iat) > 300) {
+      if (!claims.iat || Math.abs(Date.now() / 1000 - claims.iat) > 300) {
         return empty;
       }
 
@@ -239,12 +281,16 @@ export class RealPlaidClient implements PlaidClient {
         webhook_type?: string;
         event_id?: string;
         timestamp?: string;
+        consent_id?: string;
+        new_consent_status?: string;
       };
       return {
         verified: true,
         type: parsed.webhook_type ?? null,
         paymentId: parsed.payment_id ?? null,
         newStatus: parsed.new_payment_status ?? null,
+        consentId: parsed.consent_id ?? null,
+        newConsentStatus: parsed.new_consent_status ?? null,
         eventId: webhookDeliveryId(parsed),
       };
     } catch {
@@ -258,13 +304,30 @@ export class PlaidApiError extends Error {
     public code: string,
     message: string,
     public httpStatus: number,
+    public requestId: string | null = null,
   ) {
     super(message);
   }
 }
 
+export class PlaidTransportError extends Error {}
+
 function minorToMajor(minor: number): number {
   return Number((minor / 100).toFixed(2));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readOptionalString(value: Record<string, unknown>, key: string): string | null {
+  return typeof value[key] === "string" ? value[key] : null;
+}
+
+function readRequiredString(value: Record<string, unknown>, key: string): string {
+  const result = readOptionalString(value, key);
+  if (!result) throw new PlaidTransportError(`Plaid response missing ${key}`);
+  return result;
 }
 
 function b64urlToText(s: string): string {

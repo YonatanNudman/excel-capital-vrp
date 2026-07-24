@@ -57,6 +57,7 @@ export async function upsertSchedule(
   borrowerId: string,
   input: ScheduleInput,
 ): Promise<RepaymentSchedule> {
+  validateSchedule(input);
   const spec = toSpec(input);
   const firstRun = nextRunDate(spec, {
     afterDate: yesterday(input.startDate),
@@ -64,14 +65,11 @@ export async function upsertSchedule(
     collectedMinor: 0,
   });
 
-  await db
-    .prepare("UPDATE repayment_schedules SET active = 0 WHERE borrower_id = ? AND active = 1")
-    .bind(borrowerId)
-    .run();
-
   const id = newId();
-  await db
-    .prepare(
+  await db.batch([
+    db.prepare("UPDATE repayment_schedules SET active = 0 WHERE borrower_id = ? AND active = 1")
+      .bind(borrowerId),
+    db.prepare(
       `INSERT INTO repayment_schedules
         (id, borrower_id, amount_minor, currency, frequency, interval_days,
          start_date, end_mode, end_date, end_count, end_total_minor, next_run_date, active)
@@ -90,8 +88,8 @@ export async function upsertSchedule(
       input.endCount ?? null,
       input.endTotalMinor ?? null,
       firstRun,
-    )
-    .run();
+    ),
+  ]);
 
   const created = await db
     .prepare("SELECT * FROM repayment_schedules WHERE id = ?")
@@ -99,6 +97,36 @@ export async function upsertSchedule(
     .first<RepaymentSchedule>();
   if (!created) throw new Error("failed to create schedule");
   return created;
+}
+
+function validateSchedule(input: ScheduleInput): void {
+  if (!Number.isSafeInteger(input.amountMinor) || input.amountMinor <= 0) {
+    throw new Error("schedule amount must be a positive integer in minor units");
+  }
+  if (!isDate(input.startDate)) throw new Error("invalid schedule start date");
+  if (input.frequency === "custom" &&
+      (!Number.isInteger(input.intervalDays) || input.intervalDays! < 1 || input.intervalDays! > 3650)) {
+    throw new Error("custom interval must be between 1 and 3650 days");
+  }
+  if (input.endMode === "date") {
+    if (!input.endDate || !isDate(input.endDate) || input.endDate < input.startDate) {
+      throw new Error("schedule end date must be on or after the start date");
+    }
+  }
+  if (input.endMode === "count" &&
+      (!Number.isInteger(input.endCount) || input.endCount! < 1 || input.endCount! > 10000)) {
+    throw new Error("schedule payment count must be between 1 and 10000");
+  }
+  if (input.endMode === "total" &&
+      (!Number.isSafeInteger(input.endTotalMinor) || input.endTotalMinor! <= 0)) {
+    throw new Error("schedule total must be a positive amount");
+  }
+}
+
+function isDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value;
 }
 
 export async function setScheduleNextRun(

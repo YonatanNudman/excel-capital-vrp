@@ -29,6 +29,14 @@
 		"enabled": true
 	},
 	"upload_source_maps": true,
+	"durable_objects": {
+		"bindings": [
+			{ "name": "BORROWER_PAYMENT_COORDINATOR", "class_name": "BorrowerPaymentCoordinator" }
+		]
+	},
+	"migrations": [
+		{ "tag": "v1", "new_sqlite_classes": ["BorrowerPaymentCoordinator"] }
+	],
 
 	"d1_databases": [
 		{
@@ -44,7 +52,8 @@
 	// APP_ENV=development from .dev.vars, which only applies to `wrangler dev`.
 	"vars": {
 		"PLAID_ENV": "sandbox",
-		"APP_ENV": "unset"
+		"APP_ENV": "unset",
+		"COLLECTIONS_ENABLED": "false"
 	},
 
 	// Daily collection sweep at 06:00 UTC. Guarded server-side: a no-op until
@@ -59,9 +68,15 @@
 			"vars": {
 				"PLAID_ENV": "sandbox",
 				"APP_ENV": "staging",
-				"STAFF_BOOTSTRAP_ADMINS": "yonatan@thepipelinegroup.io"
+				"COLLECTIONS_ENABLED": "false",
+				"STAFF_BOOTSTRAP_ADMINS": "nudman.yonatan@gmail.com"
 			},
 			"images": { "binding": "IMAGES" },
+			"durable_objects": {
+				"bindings": [
+					{ "name": "BORROWER_PAYMENT_COORDINATOR", "class_name": "BorrowerPaymentCoordinator" }
+				]
+			},
 			"services": [
 				{ "binding": "WORKER_SELF_REFERENCE", "service": "excel-capital-vrp-staging" }
 			],
@@ -80,9 +95,15 @@
 			"vars": {
 				"PLAID_ENV": "production",
 				"APP_ENV": "production",
+				"COLLECTIONS_ENABLED": "false",
 				"STAFF_BOOTSTRAP_ADMINS": "yonatan@thepipelinegroup.io"
 			},
 			"images": { "binding": "IMAGES" },
+			"durable_objects": {
+				"bindings": [
+					{ "name": "BORROWER_PAYMENT_COORDINATOR", "class_name": "BorrowerPaymentCoordinator" }
+				]
+			},
 			"services": [
 				{ "binding": "WORKER_SELF_REFERENCE", "service": "excel-capital-vrp-prod" }
 			],

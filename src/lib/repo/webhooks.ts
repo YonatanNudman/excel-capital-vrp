@@ -13,7 +13,7 @@ export async function recordWebhookEvent(
     payload: string;
     signatureVerified: boolean;
   },
-): Promise<{ inserted: boolean; id: string }> {
+): Promise<{ inserted: boolean; processed: boolean; id: string }> {
   const id = data.eventId ?? newId();
   try {
     await db
@@ -24,11 +24,15 @@ export async function recordWebhookEvent(
       )
       .bind(id, data.type, data.plaidPaymentId, data.payload, data.signatureVerified ? 1 : 0)
       .run();
-    return { inserted: true, id };
+    return { inserted: true, processed: false, id };
   } catch (e) {
     const msg = String((e as Error)?.message ?? e);
     if (msg.includes("UNIQUE") || msg.includes("PRIMARY")) {
-      return { inserted: false, id }; // duplicate delivery
+      const existing = await db
+        .prepare("SELECT processed_at FROM webhook_events WHERE id = ?")
+        .bind(id)
+        .first<{ processed_at: string | null }>();
+      return { inserted: false, processed: Boolean(existing?.processed_at), id };
     }
     throw e;
   }

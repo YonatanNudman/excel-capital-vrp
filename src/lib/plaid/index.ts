@@ -3,7 +3,7 @@ import { MockPlaidClient } from "./mock";
 import { RealPlaidClient } from "./real";
 
 export * from "./types";
-export { PlaidApiError } from "./real";
+export { PlaidApiError, PlaidTransportError } from "./real";
 
 /**
  * Return the real Plaid client when credentials are present, otherwise the mock.
@@ -14,7 +14,6 @@ export function getPlaidClient(env: {
   PLAID_CLIENT_ID?: string;
   PLAID_SECRET?: string;
   PLAID_ENV?: string;
-  PLAID_SCOPE?: string;
   APP_ENV?: string;
 }): PlaidClient {
   if (env.PLAID_CLIENT_ID && env.PLAID_SECRET) {
@@ -22,7 +21,6 @@ export function getPlaidClient(env: {
       clientId: env.PLAID_CLIENT_ID,
       secret: env.PLAID_SECRET,
       env: env.PLAID_ENV ?? "sandbox",
-      scope: env.PLAID_SCOPE,
     });
   }
   // Fail closed in production: never silently fall back to the mock (which would

@@ -12,8 +12,15 @@ export function webhookDeliveryId(parsed: {
   new_payment_status?: string;
   event_id?: string;
   timestamp?: string;
+  consent_id?: string;
+  new_consent_status?: string;
 }): string | null {
   if (parsed.event_id) return parsed.event_id;
-  if (!parsed.payment_id) return null;
-  return `${parsed.payment_id}:${parsed.new_payment_status ?? ""}:${parsed.timestamp ?? ""}`;
+  if (parsed.payment_id) {
+    return `${parsed.payment_id}:${parsed.new_payment_status ?? ""}:${parsed.timestamp ?? ""}`;
+  }
+  if (parsed.consent_id) {
+    return `${parsed.consent_id}:${parsed.new_consent_status ?? ""}:${parsed.timestamp ?? ""}`;
+  }
+  return null;
 }

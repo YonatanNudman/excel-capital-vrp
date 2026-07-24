@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { getDb } from "@/lib/db";
+import { getDb, getEnv } from "@/lib/db";
 import { requireRole } from "@/lib/auth";
 import { writeAudit } from "@/lib/repo/audit";
 import {
@@ -15,6 +15,7 @@ import { upsertSchedule } from "@/lib/repo/schedules";
 import { createPendingConsent } from "@/lib/repo/consents";
 import { toMinorUnits } from "@/lib/money";
 import type { BorrowerStatus, EndMode, Frequency } from "@/lib/types";
+import { protectString } from "@/lib/crypto";
 
 function str(fd: FormData, key: string): string | null {
   const v = fd.get(key);
@@ -35,24 +36,41 @@ function money(fd: FormData, key: string): number | null {
 export async function createBorrowerAction(fd: FormData): Promise<void> {
   const user = await requireRole("operator");
   const db = getDb();
+  const env = getEnv();
 
   const legalName = str(fd, "legalName");
   if (!legalName) throw new Error("Legal name is required");
+  if (legalName.length > 200) throw new Error("Legal name is too long");
+  const contactEmail = str(fd, "contactEmail");
+  if (contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) {
+    throw new Error("Contact email is invalid");
+  }
+  const recipientName = str(fd, "recipientName");
+  const account = str(fd, "recipientAccount");
+  const sort = str(fd, "recipientSort");
+  if (recipientName && Boolean(account) !== Boolean(sort)) {
+    throw new Error("Account number and sort code are both required");
+  }
+  if (account && !/^\d{8}$/.test(account.replace(/\s/g, ""))) {
+    throw new Error("Account number must contain 8 digits");
+  }
+  if (sort && !/^\d{6}$/.test(sort.replace(/\D/g, ""))) {
+    throw new Error("Sort code must contain 6 digits");
+  }
 
   const borrower = await createBorrower(db, {
     legalName,
     companyNumber: str(fd, "companyNumber"),
-    contactEmail: str(fd, "contactEmail"),
+    contactEmail,
     contactPhone: str(fd, "contactPhone"),
     createdBy: user.id,
   });
 
-  const recipientName = str(fd, "recipientName");
   if (recipientName) {
     await upsertRecipient(db, borrower.id, {
       name: recipientName,
-      accountNumber: str(fd, "recipientAccount"),
-      sortCode: str(fd, "recipientSort"),
+      accountNumber: await protectString(account?.replace(/\s/g, ""), env.APP_ENCRYPTION_KEY),
+      sortCode: await protectString(sort?.replace(/\D/g, ""), env.APP_ENCRYPTION_KEY),
     });
   }
 

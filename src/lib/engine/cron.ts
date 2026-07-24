@@ -1,6 +1,7 @@
 import type { PlaidClient } from "@/lib/plaid";
 import { getPlaidClient } from "@/lib/plaid";
-import { collectPayment } from "@/lib/engine/collect";
+import { collectPayment, type CollectInput, type CollectOutcome } from "@/lib/engine/collect";
+import { collectPaymentCoordinated } from "@/lib/durable/coordinated-collect";
 import { dueSchedules, setScheduleNextRun } from "@/lib/repo/schedules";
 import { toSpec } from "@/lib/repo/schedules";
 import { getBorrower } from "@/lib/repo/borrowers";
@@ -8,10 +9,11 @@ import { getSettings } from "@/lib/repo/settings";
 import { collectionProgress } from "@/lib/repo/payments";
 import { nextRunDate, isEnded, amountForRun } from "@/lib/schedule";
 import { scheduledKey } from "@/lib/idempotency";
-import { buildReference } from "@/lib/reference";
+import { buildUniqueReference } from "@/lib/reference";
 import { writeAudit } from "@/lib/repo/audit";
 import { runConsentMaintenance } from "@/lib/engine/consent-maintenance";
 import { runAutoRetries } from "@/lib/engine/auto-retry";
+import { reconcilePayments } from "@/lib/engine/reconcile";
 import { getMailer, type Mailer, type MailerEnv } from "@/lib/mailer";
 
 export interface CronSummary {
@@ -21,6 +23,7 @@ export interface CronSummary {
   duplicate: number;
   skipped: number;
   failed: number;
+  unknown: number;
   ended: number;
 }
 
@@ -39,6 +42,7 @@ export async function runDueCollections(
   encryptionKey: string,
   today: string,
   mailer?: Mailer,
+  collector?: (input: CollectInput) => Promise<CollectOutcome>,
 ): Promise<CronSummary> {
   const summary: CronSummary = {
     date: today,
@@ -47,6 +51,7 @@ export async function runDueCollections(
     duplicate: 0,
     skipped: 0,
     failed: 0,
+    unknown: 0,
     ended: 0,
   };
 
@@ -63,7 +68,7 @@ export async function runDueCollections(
     }
 
     const spec = toSpec(schedule);
-    const progress = await collectionProgress(db, schedule.borrower_id);
+    const progress = await collectionProgress(db, schedule.borrower_id, schedule.id);
 
     // Ended? Deactivate and stop.
     if (isEnded(spec, { ...progress, onDate: dueDate })) {
@@ -79,27 +84,26 @@ export async function runDueCollections(
       continue;
     }
 
-    const reference = buildReference(settings.default_reference_format, {
+    const idempotencyKey = scheduledKey(schedule.borrower_id, schedule.id, dueDate);
+    const reference = buildUniqueReference(settings.default_reference_format, {
       borrowerToken: (borrower.company_number || borrower.legal_name || borrower.id)
         .slice(0, 8)
         .toUpperCase(),
       seq: progress.paymentsMade + 1,
-    });
+    }, idempotencyKey);
 
-    const outcome = await collectPayment(
-      db,
-      plaid,
-      encryptionKey,
-      {
+    const collectionInput: CollectInput = {
         borrowerId: schedule.borrower_id,
         amountMinor,
         reference,
-        idempotencyKey: scheduledKey(schedule.borrower_id, schedule.id, dueDate),
+        idempotencyKey,
+        scheduleId: schedule.id,
         scheduledFor: dueDate,
         actorStaffId: null,
-      },
-      mailer,
-    );
+      };
+    const outcome = collector
+      ? await collector(collectionInput)
+      : await collectPayment(db, plaid, encryptionKey, collectionInput, mailer);
 
     if (outcome.kind === "skipped") {
       // e.g. paused / no consent, leave next_run_date so it retries next pass.
@@ -109,9 +113,10 @@ export async function runDueCollections(
     if (outcome.kind === "collected") summary.collected++;
     else if (outcome.kind === "duplicate") summary.duplicate++;
     else if (outcome.kind === "failed") summary.failed++;
+    else if (outcome.kind === "unknown") summary.unknown++;
 
     // Advance to the next due date after this one.
-    const newProgress = await collectionProgress(db, schedule.borrower_id);
+    const newProgress = await collectionProgress(db, schedule.borrower_id, schedule.id);
     const next = nextRunDate(spec, {
       afterDate: dueDate,
       paymentsMade: newProgress.paymentsMade,
@@ -147,6 +152,8 @@ export async function runDueCollectionsFromEnv(
     consentExpiringSoon: number;
     autoRetried: number;
     autoRetryFailed: number;
+    reconciled: number;
+    reconciliationErrors: number;
   }
 > {
   const plaid = getPlaidClient(env);
@@ -159,10 +166,26 @@ export async function runDueCollectionsFromEnv(
     runConsentMaintenance(env.DB, now, mailer),
   );
   const collections = await phase(env.DB, today, "collections", () =>
-    runDueCollections(env.DB, plaid, env.APP_ENCRYPTION_KEY, today, mailer),
+    runDueCollections(
+      env.DB,
+      plaid,
+      env.APP_ENCRYPTION_KEY,
+      today,
+      mailer,
+      (input) => collectPaymentCoordinated(env, input),
+    ),
+  );
+  const reconciliation = await phase(env.DB, today, "reconciliation", () =>
+    reconcilePayments(env.DB, plaid, env.APP_ENCRYPTION_KEY, now),
   );
   const retries = await phase(env.DB, today, "auto_retries", () =>
-    runAutoRetries(env.DB, plaid, env.APP_ENCRYPTION_KEY, now),
+    runAutoRetries(
+      env.DB,
+      plaid,
+      env.APP_ENCRYPTION_KEY,
+      now,
+      (input) => collectPaymentCoordinated(env, input),
+    ),
   );
 
   return {
@@ -173,12 +196,15 @@ export async function runDueCollectionsFromEnv(
       duplicate: 0,
       skipped: 0,
       failed: 0,
+      unknown: 0,
       ended: 0,
     }),
     consentExpired: maintenance?.expired ?? 0,
     consentExpiringSoon: maintenance?.expiringSoon ?? 0,
     autoRetried: retries?.retried ?? 0,
     autoRetryFailed: retries?.failed ?? 0,
+    reconciled: reconciliation?.updated ?? 0,
+    reconciliationErrors: reconciliation?.errors ?? 0,
   };
 }
 

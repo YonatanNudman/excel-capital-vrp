@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "test": "vitest run -c vitest.config.ts && vitest run -c vitest.workers.config.mts",
     "test:unit": "vitest run -c vitest.config.ts",
     "test:integration": "vitest run -c vitest.workers.config.mts",
@@ -19,8 +19,8 @@
     "cf-typegen": "wrangler types --env-interface CloudflareEnv ./cloudflare-env.d.ts"
   },
   "dependencies": {
-    "@opennextjs/cloudflare": "^1.19.9",
-    "next": "16.2.6",
+    "@opennextjs/cloudflare": "^1.20.2",
+    "next": "16.2.11",
     "react": "^19.1.7",
     "react-dom": "^19.1.7"
   },
@@ -32,10 +32,14 @@
     "@types/react": "^19.1.7",
     "@types/react-dom": "^19.1.7",
     "eslint": "^9",
-    "eslint-config-next": "16.2.6",
+    "eslint-config-next": "16.2.11",
     "tailwindcss": "^4",
     "typescript": "^5.7.4",
     "vitest": "^4.1.10",
-    "wrangler": "^4.112.0"
+    "wrangler": "^4.113.0"
+  },
+  "overrides": {
+    "postcss": "8.5.22",
+    "sharp": "0.35.3"
   }
 }

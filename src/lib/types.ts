@@ -21,6 +21,7 @@ export type EndMode = "date" | "count" | "total";
 
 export type PaymentStatus =
   | "pending"
+  | "unknown"
   | "submitted"
   | "initiated"
   | "executed"
@@ -63,6 +64,7 @@ export interface Consent {
   id: string;
   borrower_id: string;
   plaid_consent_id: string | null;
+  plaid_consent_id_hash: string | null;
   plaid_recipient_id: string | null;
   status: ConsentStatus;
   currency: string;
@@ -98,18 +100,44 @@ export interface Payment {
   id: string;
   borrower_id: string;
   consent_id: string | null;
+  schedule_id: string | null;
   idempotency_key: string;
   plaid_payment_id: string | null;
+  provider_request_id: string | null;
   amount_minor: number;
   currency: string;
   reference: string | null;
   status: PaymentStatus;
+  status_version: number;
   scheduled_for: string | null;
   submitted_at: string | null;
   last_status_at: string | null;
+  last_provider_check_at: string | null;
+  reconcile_after: string | null;
+  reconciliation_attempts: number;
   failure_reason: string | null;
   retry_of: string | null;
   created_at: string;
+}
+
+export type PaymentIntentKind = "manual" | "scheduled" | "retry";
+export type PaymentIntentStatus = "prepared" | "executing" | "completed" | "cancelled";
+
+export interface PaymentIntent {
+  id: string;
+  borrower_id: string;
+  schedule_id: string | null;
+  kind: PaymentIntentKind;
+  amount_minor: number;
+  currency: string;
+  reference: string;
+  idempotency_key: string;
+  status: PaymentIntentStatus;
+  payment_id: string | null;
+  created_by: string | null;
+  expires_at: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface SetupLink {

@@ -1,4 +1,5 @@
 import type { Payment, PaymentStatus } from "@/lib/types";
+import { canTransition } from "@/lib/payment-state";
 import { newId } from "@/lib/ids";
 
 export class DuplicatePaymentError extends Error {
@@ -17,6 +18,7 @@ export async function insertPayment(
   data: {
     borrowerId: string;
     consentId: string | null;
+    scheduleId?: string | null;
     idempotencyKey: string;
     amountMinor: number;
     currency?: string;
@@ -30,14 +32,15 @@ export async function insertPayment(
     await db
       .prepare(
         `INSERT INTO payments
-          (id, borrower_id, consent_id, idempotency_key, amount_minor, currency,
-           reference, status, scheduled_for, retry_of)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+          (id, borrower_id, consent_id, schedule_id, idempotency_key, amount_minor,
+           currency, reference, status, scheduled_for, retry_of)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
       )
       .bind(
         id,
         data.borrowerId,
         data.consentId,
+        data.scheduleId ?? null,
         data.idempotencyKey,
         data.amountMinor,
         data.currency ?? "GBP",
@@ -80,33 +83,153 @@ export async function getPaymentByPlaidId(
     .first<Payment>();
 }
 
-export async function setPaymentPlaidId(
+export async function getSchedulePaymentCreatedOn(
   db: D1Database,
-  id: string,
-  plaidPaymentId: string,
-): Promise<void> {
-  await db
-    .prepare("UPDATE payments SET plaid_payment_id = ? WHERE id = ?")
-    .bind(plaidPaymentId, id)
-    .run();
+  scheduleId: string,
+  date: string,
+): Promise<Payment | null> {
+  return db
+    .prepare(
+      `SELECT * FROM payments
+       WHERE schedule_id = ? AND substr(created_at, 1, 10) = ?
+         AND status NOT IN ('failed','rejected','cancelled')
+       ORDER BY created_at DESC LIMIT 1`,
+    )
+    .bind(scheduleId, date)
+    .first<Payment>();
 }
 
-export async function updatePaymentStatus(
+export async function setPaymentProviderResult(
   db: D1Database,
   id: string,
-  status: PaymentStatus,
-  opts: { failureReason?: string | null; submittedAt?: string | null } = {},
-): Promise<void> {
+  data: {
+    plaidPaymentId: string;
+    providerRequestId?: string | null;
+    status: PaymentStatus;
+  },
+): Promise<boolean> {
   const now = new Date().toISOString();
+  const result = await db
+    .prepare(
+      `UPDATE payments
+       SET plaid_payment_id = ?, provider_request_id = ?, status = ?,
+           submitted_at = COALESCE(submitted_at, ?), last_status_at = ?,
+           last_provider_check_at = ?, reconcile_after = NULL,
+           status_version = status_version + 1
+       WHERE id = ? AND status IN ('pending','unknown')`,
+    )
+    .bind(
+      data.plaidPaymentId,
+      data.providerRequestId ?? null,
+      data.status,
+      now,
+      now,
+      now,
+      id,
+    )
+    .run();
+  return (result.meta.changes ?? 0) === 1;
+}
+
+export async function markPaymentUnknown(
+  db: D1Database,
+  id: string,
+  reason: string,
+  plaidPaymentId?: string | null,
+): Promise<void> {
+  const now = new Date();
+  const reconcileAfter = new Date(now.getTime() + 60_000).toISOString();
   await db
     .prepare(
       `UPDATE payments
-       SET status = ?, last_status_at = ?,
-           failure_reason = COALESCE(?, failure_reason),
-           submitted_at = COALESCE(?, submitted_at)
+       SET status = 'unknown', plaid_payment_id = COALESCE(?, plaid_payment_id),
+           failure_reason = ?, last_status_at = ?, reconcile_after = ?,
+           status_version = status_version + 1
+       WHERE id = ? AND status NOT IN ('settled','rejected','cancelled')`,
+    )
+    .bind(plaidPaymentId ?? null, reason.slice(0, 500), now.toISOString(), reconcileAfter, id)
+    .run();
+}
+
+export async function applyPaymentTransition(
+  db: D1Database,
+  id: string,
+  next: PaymentStatus,
+  opts: {
+    failureReason?: string | null;
+    providerRequestId?: string | null;
+    providerChecked?: boolean;
+  } = {},
+): Promise<{ applied: boolean; from: PaymentStatus; current: PaymentStatus } | null> {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const payment = await getPayment(db, id);
+    if (!payment) return null;
+    if (!canTransition(payment.status, next)) {
+      return { applied: false, from: payment.status, current: payment.status };
+    }
+
+    const now = new Date().toISOString();
+    const terminal = ["settled", "failed", "rejected", "cancelled"].includes(next);
+    const result = await db
+      .prepare(
+        `UPDATE payments
+         SET status = ?, status_version = status_version + 1, last_status_at = ?,
+             last_provider_check_at = CASE WHEN ? THEN ? ELSE last_provider_check_at END,
+             provider_request_id = COALESCE(?, provider_request_id),
+             failure_reason = ?, reconcile_after = CASE WHEN ? THEN NULL ELSE reconcile_after END
+         WHERE id = ? AND status = ? AND status_version = ?`,
+      )
+      .bind(
+        next,
+        now,
+        opts.providerChecked ? 1 : 0,
+        now,
+        opts.providerRequestId ?? null,
+        opts.failureReason ?? null,
+        terminal ? 1 : 0,
+        id,
+        payment.status,
+        payment.status_version,
+      )
+      .run();
+    if ((result.meta.changes ?? 0) === 1) {
+      return { applied: true, from: payment.status, current: next };
+    }
+  }
+  throw new Error(`payment transition contention exceeded for ${id}`);
+}
+
+export async function dueForReconciliation(
+  db: D1Database,
+  nowIso: string,
+  limit = 100,
+): Promise<Payment[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT * FROM payments
+       WHERE status IN ('pending','unknown','submitted','initiated','executed')
+         AND (reconcile_after IS NULL OR reconcile_after <= ?)
+       ORDER BY COALESCE(reconcile_after, created_at) ASC
+       LIMIT ?`,
+    )
+    .bind(nowIso, Math.min(Math.max(limit, 1), 500))
+    .all<Payment>();
+  return results ?? [];
+}
+
+export async function scheduleNextReconciliation(
+  db: D1Database,
+  id: string,
+  afterIso: string,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE payments
+       SET reconcile_after = ?, last_provider_check_at = ?,
+           reconciliation_attempts = reconciliation_attempts + 1
        WHERE id = ?`,
     )
-    .bind(status, now, opts.failureReason ?? null, opts.submittedAt ?? null, id)
+    .bind(afterIso, new Date().toISOString(), id)
     .run();
 }
 
@@ -157,8 +280,8 @@ export async function paymentSummary(db: D1Database): Promise<PaymentSummary> {
   const row = await db
     .prepare(
       `SELECT
-         COALESCE(SUM(CASE WHEN status IN ('submitted','initiated','executed') THEN 1 ELSE 0 END),0) AS inflight_n,
-         COALESCE(SUM(CASE WHEN status IN ('submitted','initiated','executed') THEN amount_minor ELSE 0 END),0) AS inflight_m,
+         COALESCE(SUM(CASE WHEN status IN ('pending','unknown','submitted','initiated','executed') THEN 1 ELSE 0 END),0) AS inflight_n,
+         COALESCE(SUM(CASE WHEN status IN ('pending','unknown','submitted','initiated','executed') THEN amount_minor ELSE 0 END),0) AS inflight_m,
          COALESCE(SUM(CASE WHEN status = 'settled' THEN 1 ELSE 0 END),0) AS settled_n,
          COALESCE(SUM(CASE WHEN status = 'settled' THEN amount_minor ELSE 0 END),0) AS settled_m,
          COALESCE(SUM(CASE WHEN status IN ('failed','rejected') THEN 1 ELSE 0 END),0) AS failed_n,
@@ -187,14 +310,17 @@ export async function paymentSummary(db: D1Database): Promise<PaymentSummary> {
 export async function collectionProgress(
   db: D1Database,
   borrowerId: string,
+  scheduleId?: string | null,
 ): Promise<{ paymentsMade: number; collectedMinor: number }> {
   const row = await db
     .prepare(
       `SELECT COUNT(*) AS n, COALESCE(SUM(amount_minor), 0) AS total
        FROM payments
-       WHERE borrower_id = ? AND status IN ('submitted','initiated','executed','settled')`,
+       WHERE borrower_id = ?
+         AND (? IS NULL OR schedule_id = ?)
+         AND status IN ('unknown','submitted','initiated','executed','settled')`,
     )
-    .bind(borrowerId)
+    .bind(borrowerId, scheduleId ?? null, scheduleId ?? null)
     .first<{ n: number; total: number }>();
   return { paymentsMade: row?.n ?? 0, collectedMinor: row?.total ?? 0 };
 }

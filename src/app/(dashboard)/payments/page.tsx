@@ -11,6 +11,7 @@ export const dynamic = "force-dynamic";
 const STATUSES: (PaymentStatus | "all")[] = [
   "all",
   "pending",
+  "unknown",
   "submitted",
   "initiated",
   "executed",

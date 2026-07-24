@@ -7,6 +7,7 @@ const COLORS: Record<string, string> = {
   expired: "bg-red-100 text-red-800",
   // consent
   pending: "bg-amber-100 text-amber-800",
+  unknown: "bg-amber-100 text-amber-900",
   authorized: "bg-emerald-100 text-emerald-800",
   rejected: "bg-red-100 text-red-800",
   // payment

@@ -3,17 +3,23 @@
 import { revalidatePath } from "next/cache";
 import { getDb, getEnv } from "@/lib/db";
 import { requireRole } from "@/lib/auth";
-import { getPlaidClient } from "@/lib/plaid";
-import { getMailer, type MailerEnv } from "@/lib/mailer";
-import { collectPayment, type CollectOutcome } from "@/lib/engine/collect";
+import type { CollectOutcome } from "@/lib/engine/collect";
+import { collectPaymentCoordinated } from "@/lib/durable/coordinated-collect";
 import { getActiveSchedule } from "@/lib/repo/schedules";
+import { toSpec } from "@/lib/repo/schedules";
 import { getSettings } from "@/lib/repo/settings";
 import { getBorrower } from "@/lib/repo/borrowers";
-import { collectionProgress, getPayment } from "@/lib/repo/payments";
-import { manualKey, retryKey } from "@/lib/idempotency";
-import { buildReference } from "@/lib/reference";
+import {
+  collectionProgress,
+  getPayment,
+  getSchedulePaymentCreatedOn,
+} from "@/lib/repo/payments";
+import { createOrGetPaymentIntent } from "@/lib/repo/payment-intents";
+import { manualKey, retryKey, scheduledKey } from "@/lib/idempotency";
+import { buildUniqueReference, uniqueReferenceFromBase } from "@/lib/reference";
 import { newId } from "@/lib/ids";
 import { toMinorUnits } from "@/lib/money";
+import { amountForRun } from "@/lib/schedule";
 
 function outcomeMessage(o: CollectOutcome): string {
   switch (o.kind) {
@@ -25,6 +31,8 @@ function outcomeMessage(o: CollectOutcome): string {
       return `Skipped: ${o.reason}.`;
     case "failed":
       return `Failed: ${o.reason}.`;
+    case "unknown":
+      return "Payment status is being confirmed. Do not submit it again.";
   }
 }
 
@@ -45,43 +53,72 @@ export async function executePaymentNowAction(
   const env = getEnv();
   const borrowerId = String(fd.get("borrowerId") ?? "");
   if (!borrowerId) return { message: "borrowerId required" };
+  if (String(env.COLLECTIONS_ENABLED) !== "true") {
+    return { message: "Collections are disabled by the go-live safety switch." };
+  }
 
   const overrideAmount = fd.get("amount");
+  const schedule = await getActiveSchedule(db, borrowerId);
+  const today = new Date().toISOString().slice(0, 10);
+  const isScheduledRun =
+    !(typeof overrideAmount === "string" && overrideAmount.trim()) &&
+    Boolean(schedule?.next_run_date && schedule.next_run_date <= today);
+  if (
+    schedule &&
+    !(typeof overrideAmount === "string" && overrideAmount.trim()) &&
+    await getSchedulePaymentCreatedOn(db, schedule.id, today)
+  ) {
+    return { message: "Today's scheduled payment is already submitted. No duplicate was created." };
+  }
   let amountMinor: number | null = null;
   if (typeof overrideAmount === "string" && overrideAmount.trim()) {
     amountMinor = toMinorUnits(Number(overrideAmount));
   } else {
-    const sched = await getActiveSchedule(db, borrowerId);
-    amountMinor = sched?.amount_minor ?? null;
+    if (schedule && isScheduledRun) {
+      const progress = await collectionProgress(db, borrowerId, schedule.id);
+      amountMinor = amountForRun(toSpec(schedule), progress.collectedMinor);
+    } else {
+      amountMinor = schedule?.amount_minor ?? null;
+    }
   }
   if (!amountMinor || amountMinor <= 0) {
     return { message: "No amount set (add a schedule or enter an amount)." };
   }
 
   const settings = await getSettings(db);
-  const { paymentsMade } = await collectionProgress(db, borrowerId);
-  const reference = buildReference(settings.default_reference_format, {
+  const { paymentsMade } = await collectionProgress(db, borrowerId, schedule?.id);
+
+  const nonce = String(fd.get("nonce") ?? "") || newId();
+  const idempotencyKey = isScheduledRun && schedule
+    ? scheduledKey(borrowerId, schedule.id, schedule.next_run_date!)
+    : manualKey(borrowerId, nonce);
+  const reference = buildUniqueReference(settings.default_reference_format, {
     borrowerToken: await borrowerToken(db, borrowerId),
     seq: paymentsMade + 1,
+  }, idempotencyKey);
+  const intent = await createOrGetPaymentIntent(db, {
+    id: nonce,
+    borrowerId,
+    scheduleId: isScheduledRun ? schedule?.id : null,
+    kind: isScheduledRun ? "scheduled" : "manual",
+    amountMinor,
+    currency: "GBP",
+    reference,
+    idempotencyKey,
+    createdBy: user.id,
+    expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
   });
 
-  // Stable per-form-render nonce makes double-submits idempotent (same key ->
-  // DB rejects the duplicate). Falls back to a fresh id if none supplied.
-  const nonce = String(fd.get("nonce") ?? "") || newId();
-
-  const outcome = await collectPayment(
-    db,
-    getPlaidClient(env),
-    env.APP_ENCRYPTION_KEY,
-    {
+  const outcome = await collectPaymentCoordinated(env, {
       borrowerId,
       amountMinor,
       reference,
-      idempotencyKey: manualKey(borrowerId, nonce),
+      idempotencyKey,
+      scheduleId: isScheduledRun ? schedule?.id : null,
+      scheduledFor: isScheduledRun ? schedule?.next_run_date : null,
+      intentId: intent.id,
       actorStaffId: user.id,
-    },
-    getMailer(env as MailerEnv),
-  );
+    });
 
   revalidatePath(`/borrowers/${borrowerId}`);
   revalidatePath("/payments");
@@ -96,6 +133,9 @@ export async function retryPaymentAction(
   const user = await requireRole("operator");
   const db = getDb();
   const env = getEnv();
+  if (String(env.COLLECTIONS_ENABLED) !== "true") {
+    return { message: "Collections are disabled by the go-live safety switch." };
+  }
   const paymentId = String(fd.get("paymentId") ?? "");
   if (!paymentId) return { message: "paymentId required" };
 
@@ -106,6 +146,17 @@ export async function retryPaymentAction(
   }
 
   const rootId = original.retry_of ?? original.id;
+  const latest = await db
+    .prepare(
+      `SELECT * FROM payments
+       WHERE COALESCE(retry_of, id) = ?
+       ORDER BY created_at DESC, id DESC LIMIT 1`,
+    )
+    .bind(rootId)
+    .first<typeof original>();
+  if (!latest || latest.id !== original.id || latest.status !== "failed") {
+    return { message: "A newer attempt already exists. Refresh before retrying." };
+  }
   const priorRetries = await db
     .prepare("SELECT COUNT(*) AS n FROM payments WHERE retry_of = ?")
     .bind(rootId)
@@ -117,21 +168,30 @@ export async function retryPaymentAction(
     return { message: `Retry limit (${settings.default_retry_max}) reached.` };
   }
 
-  const outcome = await collectPayment(
-    db,
-    getPlaidClient(env),
-    env.APP_ENCRYPTION_KEY,
-    {
+  const idempotencyKey = retryKey(rootId, attempt);
+  const reference = uniqueReferenceFromBase(original.reference ?? "ExcelPayment", idempotencyKey);
+  const intent = await createOrGetPaymentIntent(db, {
+    borrowerId: original.borrower_id,
+    scheduleId: original.schedule_id,
+    kind: "retry",
+    amountMinor: original.amount_minor,
+    currency: original.currency,
+    reference,
+    idempotencyKey,
+    createdBy: user.id,
+    expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+  });
+  const outcome = await collectPaymentCoordinated(env, {
       borrowerId: original.borrower_id,
       amountMinor: original.amount_minor,
       currency: original.currency,
-      reference: original.reference ?? "",
-      idempotencyKey: retryKey(rootId, attempt),
+      reference,
+      idempotencyKey,
+      scheduleId: original.schedule_id,
+      intentId: intent.id,
       retryOf: rootId,
       actorStaffId: user.id,
-    },
-    getMailer(env as MailerEnv),
-  );
+    });
 
   revalidatePath(`/borrowers/${original.borrower_id}`);
   revalidatePath("/payments");

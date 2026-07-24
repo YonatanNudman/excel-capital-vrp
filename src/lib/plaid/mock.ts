@@ -9,6 +9,7 @@ import type {
   ExecutePaymentResult,
   ExecutePaymentInput,
   GetPaymentResult,
+  ListedPayment,
   GetConsentResult,
   WebhookVerification,
 } from "./types";
@@ -58,11 +59,16 @@ export class MockPlaidClient implements PlaidClient {
     return {
       paymentId: `mock-payment-${hash(input.idempotencyKey)}`,
       status: "PAYMENT_STATUS_INITIATED",
+      requestId: "mock-request",
     };
   }
 
   async getPayment(paymentId: string): Promise<GetPaymentResult> {
-    return { paymentId, status: "PAYMENT_STATUS_SETTLED" };
+    return { paymentId, status: "PAYMENT_STATUS_SETTLED", requestId: "mock-request" };
+  }
+
+  async listPayments(): Promise<ListedPayment[]> {
+    return [];
   }
 
   async verifyWebhook(rawBody: string): Promise<WebhookVerification> {
@@ -74,16 +80,28 @@ export class MockPlaidClient implements PlaidClient {
         webhook_type?: string;
         event_id?: string;
         timestamp?: string;
+        consent_id?: string;
+        new_consent_status?: string;
       };
       return {
         verified: true,
         type: parsed.webhook_type ?? "PAYMENT_INITIATION",
         paymentId: parsed.payment_id ?? null,
         newStatus: parsed.new_payment_status ?? null,
+        consentId: parsed.consent_id ?? null,
+        newConsentStatus: parsed.new_consent_status ?? null,
         eventId: webhookDeliveryId(parsed),
       };
     } catch {
-      return { verified: false, type: null, paymentId: null, newStatus: null, eventId: null };
+      return {
+        verified: false,
+        type: null,
+        paymentId: null,
+        newStatus: null,
+        consentId: null,
+        newConsentStatus: null,
+        eventId: null,
+      };
     }
   }
 }

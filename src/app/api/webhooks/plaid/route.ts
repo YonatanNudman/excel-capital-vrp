@@ -19,14 +19,55 @@ export async function POST(request: Request) {
   if (!isPlaidConfigured(env) && env.APP_ENV !== "development") {
     return Response.json({ ok: false, error: "webhooks disabled (Plaid not configured)" }, { status: 503 });
   }
-  const rawBody = await request.text();
+  const declaredLength = Number(request.headers.get("content-length") ?? "0");
+  if (Number.isFinite(declaredLength) && declaredLength > 65_536) {
+    return Response.json({ ok: false, error: "payload too large" }, { status: 413 });
+  }
+  const rawBody = await readBoundedBody(request, 65_536);
+  if (rawBody == null) {
+    return Response.json({ ok: false, error: "payload too large" }, { status: 413 });
+  }
   const plaid = getPlaidClient(env);
   const mailer = getMailer(env as MailerEnv);
 
-  const result = await processWebhook(env.DB, plaid, rawBody, request.headers, mailer);
+  const result = await processWebhook(
+    env.DB,
+    plaid,
+    rawBody,
+    request.headers,
+    mailer,
+    env.APP_ENCRYPTION_KEY,
+  );
 
   if (result.status === "unverified") {
     return Response.json({ ok: false, reason: "unverified" }, { status: 400 });
   }
+  if (result.status === "retry") {
+    return Response.json({ ok: false, reason: result.reason }, { status: 503 });
+  }
   return Response.json({ ok: true, result });
+}
+
+async function readBoundedBody(request: Request, maxBytes: number): Promise<string | null> {
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxBytes) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(body);
 }

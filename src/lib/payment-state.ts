@@ -11,6 +11,7 @@
 
 export type InternalStatus =
   | "pending"
+  | "unknown"
   | "submitted"
   | "initiated"
   | "executed"
@@ -28,6 +29,7 @@ export const TERMINAL_STATES: ReadonlySet<InternalStatus> = new Set([
 
 /** Statuses that count as "money is on its way or arrived" (do not re-collect). */
 export const IN_FLIGHT_OR_DONE: ReadonlySet<InternalStatus> = new Set([
+  "unknown",
   "submitted",
   "initiated",
   "executed",
@@ -54,8 +56,8 @@ export function mapPlaidStatus(plaidStatus: string): InternalStatus | null {
       return "settled";
     case "PAYMENT_STATUS_INSUFFICIENT_FUNDS":
     case "PAYMENT_STATUS_FAILED":
-      return "failed";
     case "PAYMENT_STATUS_BLOCKED":
+      return "failed";
     case "PAYMENT_STATUS_REJECTED":
       return "rejected";
     case "PAYMENT_STATUS_CANCELLED":
@@ -68,6 +70,7 @@ export function mapPlaidStatus(plaidStatus: string): InternalStatus | null {
 /** Rank used to prevent a stale/duplicate webhook from moving state backwards. */
 const PROGRESS_RANK: Record<InternalStatus, number> = {
   pending: 0,
+  unknown: 1,
   submitted: 1,
   initiated: 2,
   executed: 3,
@@ -87,5 +90,7 @@ const PROGRESS_RANK: Record<InternalStatus, number> = {
 export function canTransition(current: InternalStatus, next: InternalStatus): boolean {
   if (current === next) return false; // no-op, e.g. duplicate webhook
   if (TERMINAL_STATES.has(current)) return false;
+  if (current === "unknown") return true;
+  if (next === "unknown") return !IN_FLIGHT_OR_DONE.has(current);
   return PROGRESS_RANK[next] >= PROGRESS_RANK[current];
 }

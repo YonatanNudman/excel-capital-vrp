@@ -1,96 +1,97 @@
-import type { PlaidClient } from "@/lib/plaid";
-import { recordWebhookEvent, markWebhookProcessed } from "@/lib/repo/webhooks";
-import { getPaymentByPlaidId, updatePaymentStatus } from "@/lib/repo/payments";
-import { getBorrower } from "@/lib/repo/borrowers";
-import { writeAudit } from "@/lib/repo/audit";
-import { mapPlaidStatus, canTransition } from "@/lib/payment-state";
+import { decryptString, sha256Hex } from "@/lib/crypto";
 import type { Mailer } from "@/lib/mailer";
-import { receiptEmail, failureEmail } from "@/lib/mailer/templates";
-import type { Payment } from "@/lib/types";
+import { failureEmail, receiptEmail } from "@/lib/mailer/templates";
+import { mapPlaidStatus } from "@/lib/payment-state";
+import type { PlaidClient } from "@/lib/plaid";
+import { writeAudit } from "@/lib/repo/audit";
+import { getBorrower } from "@/lib/repo/borrowers";
+import {
+  getConsentByPlaidHash,
+  listConsentsMissingPlaidHash,
+  setConsentPlaidHash,
+} from "@/lib/repo/consents";
+import { applyPaymentTransition, getPaymentByPlaidId } from "@/lib/repo/payments";
+import { markWebhookProcessed, recordWebhookEvent } from "@/lib/repo/webhooks";
+import type { ConsentStatus, Payment } from "@/lib/types";
 
 export type WebhookResult =
   | { status: "duplicate" }
+  | { status: "retry"; reason: string }
   | { status: "unverified" }
   | { status: "ignored"; reason: string }
   | { status: "applied"; paymentId: string; from: string; to: string }
+  | { status: "consent_applied"; consentId: string; to: string }
   | { status: "no_change"; paymentId: string; current: string };
 
-/**
- * Process one Plaid webhook delivery. Safe against duplicate deliveries (deduped
- * by event id) and out-of-order deliveries (state machine transition guard).
- */
+/** Verify, dedupe and atomically apply a Plaid webhook delivery. */
 export async function processWebhook(
   db: D1Database,
   plaid: PlaidClient,
   rawBody: string,
   headers: Headers,
   mailer?: Mailer,
+  encryptionKey?: string,
 ): Promise<WebhookResult> {
-  const v = await plaid.verifyWebhook(rawBody, headers);
+  const verification = await plaid.verifyWebhook(rawBody, headers);
+  if (!verification.verified) return { status: "unverified" };
 
-  // Verify BEFORE recording. Unverified events are stored with a random id (so a
-  // forged POST cannot pre-consume a legitimate delivery id and suppress the real
-  // webhook), then rejected. Only verified events use the real delivery id for dedupe.
-  if (!v.verified) {
-    await recordWebhookEvent(db, {
-      eventId: null,
-      type: v.type,
-      plaidPaymentId: v.paymentId,
-      payload: rawBody,
-      signatureVerified: false,
-    });
-    return { status: "unverified" };
-  }
-
-  const rec = await recordWebhookEvent(db, {
-    eventId: v.eventId,
-    type: v.type,
-    plaidPaymentId: v.paymentId,
+  const record = await recordWebhookEvent(db, {
+    eventId: verification.eventId,
+    type: verification.type,
+    plaidPaymentId: verification.paymentId,
     payload: rawBody,
     signatureVerified: true,
   });
-  if (!rec.inserted) return { status: "duplicate" };
+  if (!record.inserted && record.processed) return { status: "duplicate" };
 
-  if (!v.paymentId || !v.newStatus) {
-    await markWebhookProcessed(db, rec.id);
-    return { status: "ignored", reason: "no payment status in webhook" };
+  if (verification.consentId && verification.newConsentStatus) {
+    const result = await applyConsentWebhook(
+      db,
+      verification.consentId,
+      verification.newConsentStatus,
+      encryptionKey,
+    );
+    if (result.status !== "retry") await markWebhookProcessed(db, record.id);
+    return result;
   }
 
-  const internal = mapPlaidStatus(v.newStatus);
+  if (!verification.paymentId || !verification.newStatus) {
+    await markWebhookProcessed(db, record.id);
+    return { status: "ignored", reason: "no payment or consent status in webhook" };
+  }
+
+  const internal = mapPlaidStatus(verification.newStatus);
   if (!internal) {
-    await markWebhookProcessed(db, rec.id);
-    return { status: "ignored", reason: `unmapped status ${v.newStatus}` };
+    // Preserve the event for investigation but acknowledge it; reconciliation
+    // remains authoritative for statuses introduced by Plaid in the future.
+    await markWebhookProcessed(db, record.id);
+    return { status: "ignored", reason: `unmapped status ${verification.newStatus}` };
   }
 
-  const payment = await getPaymentByPlaidId(db, v.paymentId);
+  const payment = await getPaymentByPlaidId(db, verification.paymentId);
   if (!payment) {
-    await markWebhookProcessed(db, rec.id);
-    return { status: "ignored", reason: "unknown payment" };
+    // The execute response may not yet have reached D1. Leave this event
+    // unprocessed and ask Plaid to redeliver rather than losing the transition.
+    return { status: "retry", reason: "payment not persisted yet" };
   }
 
-  if (!canTransition(payment.status, internal)) {
-    await markWebhookProcessed(db, rec.id);
-    return { status: "no_change", paymentId: payment.id, current: payment.status };
-  }
-
-  await updatePaymentStatus(db, payment.id, internal, {
-    failureReason: internal === "failed" ? v.newStatus : null,
+  const transition = await applyPaymentTransition(db, payment.id, internal, {
+    failureReason: internal === "failed" || internal === "rejected" ? verification.newStatus : null,
   });
+  if (!transition?.applied) {
+    await markWebhookProcessed(db, record.id);
+    return { status: "no_change", paymentId: payment.id, current: transition?.current ?? payment.status };
+  }
+
   await writeAudit(db, {
     actorStaffId: null,
     action: "payment.webhook",
     entityType: "payment",
     entityId: payment.id,
-    metadata: { from: payment.status, to: internal, plaidStatus: v.newStatus },
+    metadata: { from: transition.from, to: internal, plaidStatus: verification.newStatus },
   });
+  await markWebhookProcessed(db, record.id);
 
-  // The state transition is the point of processing; mark it before the
-  // best-effort notifications so an email-path error can never leave a fully
-  // applied event looking unprocessed.
-  await markWebhookProcessed(db, rec.id);
-
-  // Notify the borrower on terminal outcomes. Email is best-effort and must never
-  // affect the webhook result: a settled receipt or a failure notice.
   if (mailer) {
     try {
       if (internal === "settled") {
@@ -113,18 +114,86 @@ export async function processWebhook(
           }),
         );
       }
-    } catch (e) {
-      console.error(`webhook notification failed for payment ${payment.id}`, e);
+    } catch (error) {
+      console.error(`webhook notification failed for payment ${payment.id}`, error);
     }
   }
 
-  return { status: "applied", paymentId: payment.id, from: payment.status, to: internal };
+  return { status: "applied", paymentId: payment.id, from: transition.from, to: internal };
 }
 
-/**
- * Send one borrower email for a payment and audit the attempt. Skips silently
- * when the borrower has no contact_email. Never throws.
- */
+async function applyConsentWebhook(
+  db: D1Database,
+  plaidConsentId: string,
+  providerStatus: string,
+  encryptionKey?: string,
+): Promise<WebhookResult> {
+  const hash = await sha256Hex(plaidConsentId);
+  let consent = await getConsentByPlaidHash(db, hash);
+  if (!consent && encryptionKey) {
+    for (const candidate of await listConsentsMissingPlaidHash(db)) {
+      try {
+        if (
+          candidate.plaid_consent_id &&
+          await decryptString(candidate.plaid_consent_id, encryptionKey) === plaidConsentId
+        ) {
+          consent = candidate;
+          await setConsentPlaidHash(db, candidate.id, hash);
+          break;
+        }
+      } catch {
+        // A malformed legacy row must not block processing other candidates.
+      }
+    }
+  }
+  if (!consent) return { status: "retry", reason: "consent not persisted yet" };
+  const status = mapConsentStatus(providerStatus);
+  if (!status) return { status: "ignored", reason: `unmapped consent status ${providerStatus}` };
+
+  const now = new Date().toISOString();
+  const statements = [
+    db.prepare(
+      `UPDATE consents SET status = ?,
+       authorized_at = CASE WHEN ? = 'authorized' THEN ? ELSE authorized_at END
+       WHERE id = ?`,
+    ).bind(status, status, now, consent.id),
+  ];
+  if (status === "authorized") {
+    statements.push(db.prepare("UPDATE borrowers SET status = 'active' WHERE id = ?")
+      .bind(consent.borrower_id));
+  } else if (status === "revoked" || status === "expired") {
+    statements.push(db.prepare("UPDATE borrowers SET status = ? WHERE id = ?")
+      .bind(status, consent.borrower_id));
+  }
+  await db.batch(statements);
+  await writeAudit(db, {
+    actorStaffId: null,
+    action: "consent.webhook",
+    entityType: "consent",
+    entityId: consent.id,
+    metadata: { providerStatus, status },
+  });
+  return { status: "consent_applied", consentId: consent.id, to: status };
+}
+
+function mapConsentStatus(status: string): ConsentStatus | null {
+  switch (status.toUpperCase()) {
+    case "AUTHORISED":
+    case "AUTHORIZED":
+      return "authorized";
+    case "REVOKED":
+      return "revoked";
+    case "EXPIRED":
+      return "expired";
+    case "REJECTED":
+      return "rejected";
+    case "PENDING":
+      return "pending";
+    default:
+      return null;
+  }
+}
+
 async function notifyBorrower(
   db: D1Database,
   mailer: Mailer,
@@ -134,7 +203,6 @@ async function notifyBorrower(
 ): Promise<void> {
   const borrower = await getBorrower(db, payment.borrower_id);
   if (!borrower?.contact_email) return;
-
   const { subject, text } = build(borrower.legal_name);
   const result = await mailer.send({ to: borrower.contact_email, subject, text });
   await writeAudit(db, {

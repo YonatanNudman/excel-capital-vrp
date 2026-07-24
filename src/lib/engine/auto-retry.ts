@@ -1,8 +1,9 @@
 import type { PlaidClient } from "@/lib/plaid";
-import { collectPayment } from "@/lib/engine/collect";
+import { collectPayment, type CollectInput, type CollectOutcome } from "@/lib/engine/collect";
 import { getSettings } from "@/lib/repo/settings";
 import { retryKey } from "@/lib/idempotency";
 import { writeAudit } from "@/lib/repo/audit";
+import { uniqueReferenceFromBase } from "@/lib/reference";
 import type { Payment } from "@/lib/types";
 
 export interface AutoRetrySummary {
@@ -32,6 +33,7 @@ export async function runAutoRetries(
   plaid: PlaidClient,
   encryptionKey: string,
   now: Date,
+  collector?: (input: CollectInput) => Promise<CollectOutcome>,
 ): Promise<AutoRetrySummary> {
   const summary: AutoRetrySummary = {
     considered: 0,
@@ -95,15 +97,19 @@ export async function runAutoRetries(
       continue;
     }
 
-    const outcome = await collectPayment(db, plaid, encryptionKey, {
+    const input: CollectInput = {
       borrowerId: candidate.borrower_id,
       amountMinor: candidate.amount_minor,
       currency: candidate.currency,
-      reference: candidate.reference ?? "",
+      reference: uniqueReferenceFromBase(candidate.reference ?? "ExcelPayment", retryKey(root, attempt)),
       idempotencyKey: retryKey(root, attempt),
+      scheduleId: candidate.schedule_id,
       retryOf: root,
       actorStaffId: null,
-    });
+    };
+    const outcome = collector
+      ? await collector(input)
+      : await collectPayment(db, plaid, encryptionKey, input);
 
     switch (outcome.kind) {
       case "collected":
@@ -114,6 +120,9 @@ export async function runAutoRetries(
         break;
       case "failed":
         summary.failed++;
+        break;
+      case "unknown":
+        summary.skipped++;
         break;
       case "skipped":
         summary.skipped++;

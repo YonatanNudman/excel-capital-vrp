@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getDb } from "@/lib/db";
+import { getDb, getEnv } from "@/lib/db";
+import { unprotectString } from "@/lib/crypto";
 import { getBorrower } from "@/lib/repo/borrowers";
 import { getActiveConsent } from "@/lib/repo/consents";
 import { getActiveSchedule } from "@/lib/repo/schedules";
@@ -78,6 +79,9 @@ export default async function BorrowerProfile({
   ]);
   const canOperate = user ? hasRole(user, "operator") : false;
   const paused = borrower.status === "paused";
+  const env = getEnv();
+  const accountNumber = await unprotectString(recipient?.account_number, env.APP_ENCRYPTION_KEY);
+  const sortCode = await unprotectString(recipient?.sort_code, env.APP_ENCRYPTION_KEY);
 
   return (
     <div>
@@ -93,7 +97,11 @@ export default async function BorrowerProfile({
 
       {canOperate && (
         <div className="mb-6 flex flex-wrap items-start gap-3 rounded-lg border border-slate-200 bg-white p-4">
-          <ExecuteNowButton borrowerId={borrower.id} nonce={crypto.randomUUID()} />
+          <ExecuteNowButton
+            borrowerId={borrower.id}
+            nonce={crypto.randomUUID()}
+            amountLabel={schedule ? formatMinor(schedule.amount_minor, schedule.currency) : "the entered amount"}
+          />
           <SetupLinkButton borrowerId={borrower.id} />
           <form action={setBorrowerStatusAction}>
             <input type="hidden" name="borrowerId" value={borrower.id} />
@@ -127,8 +135,8 @@ export default async function BorrowerProfile({
 
         <Card title="Recipient">
           <Row label="Account name" value={recipient?.name} />
-          <Row label="Account number" value={recipient?.account_number} />
-          <Row label="Sort code" value={recipient?.sort_code} />
+          <Row label="Account number" value={maskAccount(accountNumber)} />
+          <Row label="Sort code" value={maskSortCode(sortCode)} />
           <Row label="Plaid recipient" value={recipient?.plaid_recipient_id ? "linked" : "not yet"} />
         </Card>
 
@@ -198,7 +206,10 @@ export default async function BorrowerProfile({
                     <td className="py-2 text-slate-600">{p.reference ?? "-"}</td>
                     <td className="py-2">
                       <StatusBadge status={p.status} />
-                      {p.failure_reason && (
+                      {p.status === "unknown" && (
+                        <span className="ml-2 text-xs text-amber-700">Confirming with bank; do not retry</span>
+                      )}
+                      {p.failure_reason && (p.status === "failed" || p.status === "rejected") && (
                         <span className="ml-2 text-xs text-red-500">{p.failure_reason}</span>
                       )}
                     </td>
@@ -214,4 +225,12 @@ export default async function BorrowerProfile({
       </div>
     </div>
   );
+}
+
+function maskAccount(value: string | null): string | null {
+  return value ? `••••${value.replace(/\D/g, "").slice(-4)}` : null;
+}
+
+function maskSortCode(value: string | null): string | null {
+  return value ? `••-••-${value.replace(/\D/g, "").slice(-2)}` : null;
 }

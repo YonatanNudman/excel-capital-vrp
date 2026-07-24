@@ -80,3 +80,23 @@ export async function decryptString(payload: string, keyMaterial: string): Promi
   );
   return new TextDecoder().decode(pt);
 }
+
+const PROTECTED_PREFIX = "enc1:";
+
+export async function protectString(
+  plaintext: string | null | undefined,
+  keyMaterial: string,
+): Promise<string | null> {
+  if (!plaintext) return null;
+  if (plaintext.startsWith(PROTECTED_PREFIX)) return plaintext;
+  return `${PROTECTED_PREFIX}${await encryptString(plaintext, keyMaterial)}`;
+}
+
+export async function unprotectString(
+  stored: string | null | undefined,
+  keyMaterial: string,
+): Promise<string | null> {
+  if (!stored) return null;
+  if (!stored.startsWith(PROTECTED_PREFIX)) return stored;
+  return decryptString(stored.slice(PROTECTED_PREFIX.length), keyMaterial);
+}

@@ -3,7 +3,6 @@ import { headers } from "next/headers";
 import { getDb, getEnv } from "@/lib/db";
 import { getAuthenticatedEmail } from "@/lib/access";
 import {
-  countStaff,
   createStaff,
   getStaffByEmail,
   touchLastLogin,

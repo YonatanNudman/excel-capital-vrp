@@ -4,9 +4,10 @@ import {
   attachPlaidConsent,
   createPendingConsent,
   getActiveConsent,
+  setConsentPlaidHash,
 } from "@/lib/repo/consents";
 import { getBorrower } from "@/lib/repo/borrowers";
-import { encryptString, decryptString } from "@/lib/crypto";
+import { encryptString, decryptString, sha256Hex, unprotectString } from "@/lib/crypto";
 import type { Consent } from "@/lib/types";
 
 export class SetupError extends Error {}
@@ -38,8 +39,8 @@ export async function provisionLinkToken(
   if (!plaidRecipientId) {
     const r = await plaid.createRecipient({
       name: recipient.name,
-      accountNumber: recipient.account_number,
-      sortCode: recipient.sort_code,
+      accountNumber: await unprotectString(recipient.account_number, encryptionKey),
+      sortCode: await unprotectString(recipient.sort_code, encryptionKey),
     });
     plaidRecipientId = r.recipientId;
     await setRecipientPlaidId(db, recipient.id, plaidRecipientId);
@@ -64,6 +65,9 @@ export async function provisionLinkToken(
   let plaintextConsentId: string;
   if (consent.plaid_consent_id) {
     plaintextConsentId = await decryptString(consent.plaid_consent_id, encryptionKey);
+    if (!consent.plaid_consent_id_hash) {
+      await setConsentPlaidHash(db, consent.id, await sha256Hex(plaintextConsentId));
+    }
   } else {
     const reference = referenceFor(borrower.legal_name);
     const c = await plaid.createConsent(plaidRecipientId, reference, {
@@ -78,6 +82,7 @@ export async function provisionLinkToken(
     plaintextConsentId = c.consentId;
     await attachPlaidConsent(db, consent.id, {
       plaidConsentIdEncrypted: await encryptString(c.consentId, encryptionKey),
+      plaidConsentIdHash: await sha256Hex(c.consentId),
       plaidRecipientId,
       rawConstraints: c.rawConstraints,
     });
@@ -107,5 +112,5 @@ export async function confirmConsent(
 }
 
 function referenceFor(name: string): string {
-  return `Excel-${name}`.replace(/[^a-zA-Z0-9- ]/g, "").slice(0, 18);
+  return `Excel${name}`.replace(/[^a-zA-Z0-9]/g, "").slice(0, 18);
 }

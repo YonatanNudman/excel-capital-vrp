@@ -69,7 +69,8 @@ export default async function SetupPage({
     const prov = await provisionLinkToken(db, plaid, env.APP_ENCRYPTION_KEY, env, borrower.id);
     linkToken = prov.linkToken;
   } catch (e) {
-    error = (e as Error).message;
+    console.error(`setup provisioning failed for borrower ${borrower.id}`, e);
+    error = "Setup is temporarily unavailable. Please try again or contact Excel Capital.";
   }
 
   return (

@@ -30,7 +30,7 @@ export async function GET(request: Request) {
     appEnv,
     plaidEnv: env.PLAID_ENV ?? "unknown",
     db,
-    authenticatedEmail: email, // null until Access is in front (or dev header set)
+    authenticated: Boolean(email),
     time: new Date().toISOString(),
   });
 }

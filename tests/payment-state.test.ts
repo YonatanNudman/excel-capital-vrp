@@ -29,7 +29,7 @@ describe("mapPlaidStatus", () => {
 
   it("maps rejected/blocked/cancelled and returns null for unknown", () => {
     expect(mapPlaidStatus("PAYMENT_STATUS_REJECTED")).toBe("rejected");
-    expect(mapPlaidStatus("PAYMENT_STATUS_BLOCKED")).toBe("rejected");
+    expect(mapPlaidStatus("PAYMENT_STATUS_BLOCKED")).toBe("failed");
     expect(mapPlaidStatus("PAYMENT_STATUS_CANCELLED")).toBe("cancelled");
     expect(mapPlaidStatus("SOMETHING_NEW")).toBeNull();
   });

@@ -41,11 +41,21 @@ export interface ExecutePaymentInput {
 export interface ExecutePaymentResult {
   paymentId: string;
   status: string; // raw Plaid status, e.g. PAYMENT_STATUS_INITIATED
+  requestId: string | null;
 }
 
 export interface GetPaymentResult {
   paymentId: string;
   status: string;
+  requestId: string | null;
+}
+
+export interface ListedPayment {
+  paymentId: string;
+  status: string;
+  reference: string | null;
+  amountMinor: number | null;
+  currency: string | null;
 }
 
 export interface GetConsentResult {
@@ -58,6 +68,8 @@ export interface WebhookVerification {
   type: string | null;
   paymentId: string | null;
   newStatus: string | null;
+  consentId: string | null;
+  newConsentStatus: string | null;
   eventId: string | null;
 }
 
@@ -79,5 +91,6 @@ export interface PlaidClient {
   getConsent(consentId: string): Promise<GetConsentResult>;
   executePayment(input: ExecutePaymentInput): Promise<ExecutePaymentResult>;
   getPayment(paymentId: string): Promise<GetPaymentResult>;
+  listPayments(consentId: string): Promise<ListedPayment[]>;
   verifyWebhook(rawBody: string, headers: Headers): Promise<WebhookVerification>;
 }
