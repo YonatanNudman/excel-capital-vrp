@@ -19,11 +19,7 @@ export async function GET(request: Request) {
     db = "error";
   }
 
-  const email = await getAuthenticatedEmail(request.headers, {
-    APP_ENV: appEnv,
-    ACCESS_TEAM_DOMAIN: env.ACCESS_TEAM_DOMAIN,
-    ACCESS_AUD: env.ACCESS_AUD,
-  });
+  const email = await getAuthenticatedEmail(request.headers, { ...env, APP_ENV: appEnv });
 
   return Response.json({
     ok: db === "ok",

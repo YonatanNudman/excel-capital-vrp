@@ -134,6 +134,31 @@ For a custom production hostname later: add a zone, attach a Custom Domain to
 the Worker, create a matching Access app, and disable the public workers.dev
 route.
 
+## Automated E2E access to staging (service token)
+
+Staging login is a human one-time PIN, which automation cannot receive. A single
+Cloudflare Access service token drives staging tests instead.
+
+- Access service token: "E2E Sandbox Test (staging only)", token id
+  `e98d681b-7da8-44ac-a5be-5337d2c1bcbf`, client id
+  `fe2d68d9fa57529df430962a8f984970.access`. The client secret was shown once at
+  creation and is not stored in this repo.
+- Access policy "E2E service token" (`non_identity`) on the staging app permits
+  it. The human email policy is unchanged.
+- Passing Access is not enough: the app requires an identity. `src/lib/access.ts`
+  maps this one token's verified `common_name` to the staff account in
+  `ACCESS_SERVICE_ACCOUNT_EMAIL`, which is seeded as **operator** (not admin) in
+  the staging DB. Both variables live in the staging block of `wrangler.jsonc`
+  only, and the mapping is refused outright when `APP_ENV=production`.
+- Use it by sending `CF-Access-Client-Id` and `CF-Access-Client-Secret`.
+
+To revoke: delete the service token in Zero Trust (or unset
+`ACCESS_SERVICE_TOKEN_CN` and redeploy). Either alone is sufficient.
+
+This path must never be configured in production. There are three independent
+guards: the variables are absent from the production env, the code refuses when
+`APP_ENV=production`, and `tests/access.test.ts` asserts that refusal.
+
 ## Plaid go-live gate
 
 Do NOT set `PLAID_ENV=production` or production Plaid secrets until:

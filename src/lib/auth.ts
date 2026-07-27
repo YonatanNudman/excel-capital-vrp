@@ -32,11 +32,10 @@ export async function getCurrentUser(): Promise<StaffUser | null> {
   const env = getEnv();
   const db = getDb();
   const h = await headers();
-  const email = await getAuthenticatedEmail(h, {
-    APP_ENV: env.APP_ENV,
-    ACCESS_TEAM_DOMAIN: env.ACCESS_TEAM_DOMAIN,
-    ACCESS_AUD: env.ACCESS_AUD,
-  });
+  // Pass the whole env rather than hand-picking fields: AccessEnv reads only
+  // what it needs, and forwarding everything means adding a new Access setting
+  // never silently fails to reach this call site.
+  const email = await getAuthenticatedEmail(h, env);
   if (!email) return null;
 
   let user = await getStaffByEmail(db, email);

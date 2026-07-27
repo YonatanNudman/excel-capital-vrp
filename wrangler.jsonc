@@ -69,7 +69,14 @@
 				"PLAID_ENV": "sandbox",
 				"APP_ENV": "staging",
 				"COLLECTIONS_ENABLED": "false",
-				"STAFF_BOOTSTRAP_ADMINS": "nudman.yonatan@gmail.com"
+				"STAFF_BOOTSTRAP_ADMINS": "nudman.yonatan@gmail.com",
+				// Automated end-to-end testing only. Maps the "E2E Sandbox Test"
+				// Access service token to an operator-role service account, so tests
+				// can drive staging without a human one-time PIN. Intentionally
+				// absent from the production env below, and src/lib/access.ts
+				// refuses this path outright when APP_ENV=production.
+				"ACCESS_SERVICE_TOKEN_CN": "fe2d68d9fa57529df430962a8f984970.access",
+				"ACCESS_SERVICE_ACCOUNT_EMAIL": "e2e-bot@excel-capital.invalid"
 			},
 			"images": { "binding": "IMAGES" },
 			"durable_objects": {

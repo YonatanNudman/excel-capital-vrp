@@ -23,6 +23,10 @@ export interface AccessEnv {
   APP_ENV?: string;
   ACCESS_TEAM_DOMAIN?: string; // e.g. myteam.cloudflareaccess.com
   ACCESS_AUD?: string; // Access application AUD tag
+  // Non-production only: map one specific Access service token to one staff
+  // account so automated end-to-end tests can drive a deployed environment.
+  ACCESS_SERVICE_TOKEN_CN?: string; // the token's client_id, as the JWT common_name
+  ACCESS_SERVICE_ACCOUNT_EMAIL?: string; // the staff account it acts as
 }
 
 export async function getAuthenticatedEmail(
@@ -34,8 +38,11 @@ export async function getAuthenticatedEmail(
   if (configured) {
     const token = headers.get(ACCESS_JWT_HEADER);
     if (!token) return null;
-    const email = await verifyAccessJwt(token, env.ACCESS_TEAM_DOMAIN!, env.ACCESS_AUD!);
-    return email ? email.toLowerCase() : null;
+    const claims = await verifyAccessJwt(token, env.ACCESS_TEAM_DOMAIN!, env.ACCESS_AUD!);
+    if (!claims) return null;
+    if (claims.email) return claims.email.toLowerCase();
+    // No email claim means a machine (service token) rather than a person.
+    return serviceAccountEmail(claims.common_name, env);
   }
 
   // Not configured: only trust headers in strictly local development. The
@@ -48,6 +55,28 @@ export async function getAuthenticatedEmail(
     return cookieEmail ? decodeURIComponent(cookieEmail).toLowerCase() : null;
   }
   return null;
+}
+
+/**
+ * Resolve a verified service-token identity to the staff account it may act as.
+ *
+ * Deliberately narrow. All four conditions must hold:
+ *  - the environment is NOT production (this never grants access to real money),
+ *  - both mapping variables are configured,
+ *  - the JWT carried a common_name,
+ *  - that common_name matches the single allowlisted token exactly.
+ *
+ * The signature was already cryptographically verified by the caller, so the
+ * common_name cannot be spoofed. Revoke by deleting the token in Cloudflare or
+ * by unsetting ACCESS_SERVICE_TOKEN_CN.
+ */
+function serviceAccountEmail(commonName: string | undefined, env: AccessEnv): string | null {
+  if (env.APP_ENV === "production") return null;
+  const allowedCn = env.ACCESS_SERVICE_TOKEN_CN;
+  const actAs = env.ACCESS_SERVICE_ACCOUNT_EMAIL;
+  if (!allowedCn || !actAs || !commonName) return null;
+  if (commonName !== allowedCn) return null;
+  return actAs.toLowerCase();
 }
 
 function readCookie(cookieHeader: string | null, name: string): string | null {
@@ -83,11 +112,16 @@ async function getJwks(teamDomain: string): Promise<Jwk[]> {
   return keys;
 }
 
+interface VerifiedClaims {
+  email?: string;
+  common_name?: string;
+}
+
 async function verifyAccessJwt(
   token: string,
   teamDomain: string,
   aud: string,
-): Promise<string | null> {
+): Promise<VerifiedClaims | null> {
   try {
     const [headerB64, payloadB64, sigB64] = token.split(".");
     if (!headerB64 || !payloadB64 || !sigB64) return null;
@@ -118,13 +152,14 @@ async function verifyAccessJwt(
       iss?: string;
       exp?: number;
       email?: string;
+      common_name?: string;
     };
     const auds = Array.isArray(claims.aud) ? claims.aud : claims.aud ? [claims.aud] : [];
     if (!auds.includes(aud)) return null;
     if (claims.iss !== `https://${teamDomain}`) return null;
     if (!claims.exp || claims.exp < Date.now() / 1000) return null;
 
-    return claims.email ?? null;
+    return { email: claims.email, common_name: claims.common_name };
   } catch {
     return null;
   }
