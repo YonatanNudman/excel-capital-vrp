@@ -11,16 +11,23 @@ export default defineConfig({
     cloudflareTest(async () => {
       const migrations = await readD1Migrations(path.join(__dirname, "migrations"));
       return {
+        main: path.join(__dirname, "tests/integration/test-worker.ts"),
         miniflare: {
           compatibilityDate: "2026-07-17",
           compatibilityFlags: ["nodejs_compat"],
           d1Databases: ["DB"],
+          // The coordinator is the per-borrower lock that stops a cron sweep and
+          // a manual "execute now" from both charging the same borrower.
+          durableObjects: {
+            BORROWER_PAYMENT_COORDINATOR: "BorrowerPaymentCoordinator",
+          },
           bindings: {
             TEST_MIGRATIONS: migrations,
             APP_ENCRYPTION_KEY: "test-encryption-key",
             APP_ENV: "development",
             PLAID_ENV: "sandbox",
             CRON_SECRET: "test-cron-secret",
+            COLLECTIONS_ENABLED: "true",
           },
         },
       };
