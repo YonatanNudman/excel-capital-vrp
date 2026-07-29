@@ -36,5 +36,15 @@ EMAIL_FROM=
 # --- Plaid VRP consent scope (confirm with Plaid before go-live) ---
 PLAID_SCOPE=
 
+# VRP consent type. COMMERCIAL is what this product needs (collecting from a
+# borrower's account) and is the default. Plaid must enable it per account;
+# until they do, sandbox returns UNAUTHORIZED_ROUTE_ACCESS. Set SWEEPING to keep
+# testing meanwhile. Refused outright when APP_ENV=production.
+PLAID_CONSENT_TYPE=
+
+# Final kill switch. Must be "true" for any payment execution (manual,
+# scheduled or retry) to run. Defaults to false everywhere.
+COLLECTIONS_ENABLED=false
+
 # --- Local dev only ---
 APP_ENV=development

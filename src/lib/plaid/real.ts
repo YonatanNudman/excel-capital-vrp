@@ -23,15 +23,27 @@ export interface RealPlaidConfig {
   clientId: string;
   secret: string;
   env: string; // "sandbox" | "production"
+  /**
+   * VRP consent type. Excel Capital's real use case is COMMERCIAL: collecting
+   * repayments from a third party's account. SWEEPING only moves money between
+   * accounts the SAME person owns, so it must never be used in production here.
+   *
+   * Plaid gates COMMERCIAL per account and returns UNAUTHORIZED_ROUTE_ACCESS
+   * until they enable it. Set PLAID_CONSENT_TYPE=SWEEPING to keep testing in
+   * sandbox while that entitlement is pending.
+   */
+  consentType?: string;
 }
 
 /**
  * Real Plaid Payment Initiation / VRP client via fetch (Workers-native).
  *
- * NOTE: This has not been exercised against a live Plaid account yet. Every
- * request/response shape follows Plaid's documented Payment Initiation API, but
- * validate end-to-end in sandbox once credentials arrive. Amounts are sent as
+ * Exercised against live Plaid sandbox from 2026-07-29. Amounts are sent as
  * major-unit decimals (Plaid's format); we store minor units internally.
+ *
+ * When changing a request shape, add a case to tests/plaid-consent.test.ts.
+ * The mock client accepts any payload, so a wrong field name is invisible
+ * until a real call fails (which is how max_individual_amount was found).
  */
 export class RealPlaidClient implements PlaidClient {
   readonly mode = "real" as const;
@@ -93,21 +105,33 @@ export class RealPlaidClient implements PlaidClient {
     reference: string,
     constraints: ConsentConstraints,
   ): Promise<CreateConsentResult> {
-    const plaidConstraints: Record<string, unknown> = {};
-    if (constraints.validFrom || constraints.validTo) {
-      plaidConstraints.valid_date_time = {
-        from: constraints.validFrom ?? undefined,
-        to: constraints.validTo ?? undefined,
-      };
+    // Plaid requires BOTH caps on a VRP consent. Fail here with a message that
+    // names the missing limit, rather than letting Plaid return a generic 400.
+    if (constraints.maxPaymentAmountMinor == null) {
+      throw new PlaidApiError(
+        "MISSING_CONSTRAINT",
+        "a maximum per-payment amount is required to create a VRP consent",
+        400,
+        null,
+      );
     }
-    if (constraints.maxPaymentAmountMinor != null) {
-      plaidConstraints.max_individual_amount = {
+    if (constraints.periodicMaxAmountMinor == null || !constraints.period) {
+      throw new PlaidApiError(
+        "MISSING_CONSTRAINT",
+        "a periodic maximum amount and period are required to create a VRP consent",
+        400,
+        null,
+      );
+    }
+
+    const plaidConstraints: Record<string, unknown> = {
+      // Plaid's field is max_payment_amount. max_individual_amount is rejected
+      // with UNKNOWN_FIELDS, which is how this was originally caught.
+      max_payment_amount: {
         currency: constraints.currency,
         value: minorToMajor(constraints.maxPaymentAmountMinor),
-      };
-    }
-    if (constraints.periodicMaxAmountMinor != null && constraints.period) {
-      plaidConstraints.periodic_amounts = [
+      },
+      periodic_amounts: [
         {
           amount: {
             currency: constraints.currency,
@@ -116,13 +140,19 @@ export class RealPlaidClient implements PlaidClient {
           interval: constraints.period,
           alignment: constraints.periodicAlignment ?? "CALENDAR",
         },
-      ];
+      ],
+    };
+    if (constraints.validFrom || constraints.validTo) {
+      plaidConstraints.valid_date_time = {
+        from: toRfc3339(constraints.validFrom, "valid from"),
+        to: toRfc3339(constraints.validTo, "valid to"),
+      };
     }
 
     const r = await this.call("/payment_initiation/consent/create", {
         recipient_id: recipientId,
         reference,
-        type: "COMMERCIAL",
+        type: this.cfg.consentType ?? "COMMERCIAL",
         constraints: plaidConstraints,
       });
     return { consentId: readRequiredString(r, "consent_id"), rawConstraints: plaidConstraints };
@@ -311,6 +341,27 @@ export class PlaidApiError extends Error {
 }
 
 export class PlaidTransportError extends Error {}
+
+/**
+ * Plaid requires RFC 3339 datetimes. Our consent window originates from an
+ * <input type="datetime-local">, which produces "2027-07-29T00:00" with no
+ * seconds and no offset, and Plaid rejects that with INVALID_FIELD. A bare
+ * local datetime is interpreted in the runtime's zone, which is what the person
+ * filling the form meant.
+ */
+function toRfc3339(value: string | null | undefined, label: string): string | undefined {
+  if (!value) return undefined;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new PlaidApiError(
+      "INVALID_CONSTRAINT",
+      `${label} is not a valid datetime: ${value}`,
+      400,
+      null,
+    );
+  }
+  return parsed.toISOString();
+}
 
 function minorToMajor(minor: number): number {
   return Number((minor / 100).toFixed(2));

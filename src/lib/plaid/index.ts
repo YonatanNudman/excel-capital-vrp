@@ -15,12 +15,23 @@ export function getPlaidClient(env: {
   PLAID_SECRET?: string;
   PLAID_ENV?: string;
   APP_ENV?: string;
+  PLAID_CONSENT_TYPE?: string;
 }): PlaidClient {
   if (env.PLAID_CLIENT_ID && env.PLAID_SECRET) {
+    const consentType = env.PLAID_CONSENT_TYPE?.toUpperCase() || "COMMERCIAL";
+    // SWEEPING consents only cover moving money between one person's own
+    // accounts. Collecting a borrower's repayment under a sweeping consent
+    // would be the wrong authorisation entirely, so refuse it in production.
+    if (consentType !== "COMMERCIAL" && env.APP_ENV === "production") {
+      throw new Error(
+        `PLAID_CONSENT_TYPE must be COMMERCIAL in production (got ${consentType})`,
+      );
+    }
     return new RealPlaidClient({
       clientId: env.PLAID_CLIENT_ID,
       secret: env.PLAID_SECRET,
       env: env.PLAID_ENV ?? "sandbox",
+      consentType,
     });
   }
   // Fail closed in production: never silently fall back to the mock (which would
