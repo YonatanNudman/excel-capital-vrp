@@ -159,6 +159,27 @@ This path must never be configured in production. There are three independent
 guards: the variables are absent from the production env, the code refuses when
 `APP_ENV=production`, and `tests/access.test.ts` asserts that refusal.
 
+## Plaid dashboard configuration (BLOCKS borrower testing)
+
+Two items must be done in the Plaid dashboard by an account owner. Neither is a
+code change, and bank connection cannot work without them.
+
+1. **Register the OAuth redirect URI.** The app sends
+   `{APP_BASE_URL}/setup/complete`. Without it, `/link/token/create` fails with
+   "OAuth redirect URI must be configured in the developer dashboard". Register:
+   `https://excel-capital-vrp-staging.excel-capital.workers.dev/setup/complete`
+   and the production hostname later. See https://plaid.com/docs/#oauth-redirect-uris
+
+2. **Request commercial VRP access.** `type: "COMMERCIAL"` currently returns
+   UNAUTHORIZED_ROUTE_ACCESS, meaning the account is not entitled to it. This
+   product REQUIRES commercial: it collects from a borrower's own account.
+   SWEEPING, which the account can already use, only authorises moving money
+   between accounts the same person owns, so it is not a substitute for real
+   use. `PLAID_CONSENT_TYPE=SWEEPING` unblocks sandbox testing of everything
+   else in the meantime; `getPlaidClient` refuses it when APP_ENV=production.
+
+Until item 1 is done, borrower bank connection cannot be tested by anyone.
+
 ## Plaid go-live gate
 
 Do NOT set `PLAID_ENV=production` or production Plaid secrets until:
@@ -169,7 +190,26 @@ Do NOT set `PLAID_ENV=production` or production Plaid secrets until:
 - Timeout-after-submit recovery has been observed via reconciliation without a
   second payment.
 - All scenario evals pass in CI.
+- Commercial VRP is enabled on the Plaid account and `PLAID_CONSENT_TYPE` is
+  COMMERCIAL (production refuses anything else).
+- A decision has been made on the cron-vs-manual double-collection gap below.
 - Owner (Yonatan) has explicitly approved production.
+
+### Open risk: cron and manual execute can both collect
+
+The per-borrower Durable Object lock only blocks collections that overlap in
+time. A cron sweep and a staff "execute now" a few seconds apart both succeed,
+because the lease is released as soon as the first finishes and `manualKey()`
+is randomised so it never collides with the deterministic cron key. The
+borrower is charged twice. Documented by the test named "KNOWN GAP" in
+`tests/integration/coordinator.test.ts`.
+
+Two ways to close it, both product decisions:
+- Give a manual execute that is settling a schedule the same deterministic key
+  as the cron run, so the second attempt dedupes as a duplicate. Ad-hoc
+  collections unrelated to a schedule keep the random key.
+- Or have the coordinator refuse a second collection for the same borrower
+  inside a short cooldown window unless explicitly overridden.
 
 `COLLECTIONS_ENABLED` is a separate final kill switch and defaults to `false` in
 all Wrangler environments. Keep it false while applying migrations and running
