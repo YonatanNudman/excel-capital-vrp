@@ -76,7 +76,12 @@
 				// absent from the production env below, and src/lib/access.ts
 				// refuses this path outright when APP_ENV=production.
 				"ACCESS_SERVICE_TOKEN_CN": "fe2d68d9fa57529df430962a8f984970.access",
-				"ACCESS_SERVICE_ACCOUNT_EMAIL": "e2e-bot@excel-capital.invalid"
+				"ACCESS_SERVICE_ACCOUNT_EMAIL": "e2e-bot@excel-capital.invalid",
+				// Excel Capital testers sign themselves in with any address at this
+				// domain and are provisioned as OPERATOR (never admin). Staging only:
+				// src/lib/auth.ts refuses domain provisioning when APP_ENV=production,
+				// where staff must be added deliberately.
+				"STAFF_AUTO_PROVISION_DOMAIN": "excelcapital.co.uk"
 			},
 			"images": { "binding": "IMAGES" },
 			"durable_objects": {

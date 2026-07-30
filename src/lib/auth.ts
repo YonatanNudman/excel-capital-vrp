@@ -40,11 +40,9 @@ export async function getCurrentUser(): Promise<StaffUser | null> {
 
   let user = await getStaffByEmail(db, email);
   if (!user) {
-    if (isBootstrapAdmin(email, env.STAFF_BOOTSTRAP_ADMINS)) {
-      user = await createStaff(db, email, "admin");
-    } else {
-      return null; // authenticated but not authorised
-    }
+    const role = autoProvisionRole(email, env);
+    if (!role) return null; // authenticated but not authorised
+    user = await createStaff(db, email, role);
   }
   // A disabled account is treated as not authorised. getStaffByEmail still
   // returns the disabled row above, so the bootstrap path never tries to
@@ -62,6 +60,41 @@ function isBootstrapAdmin(email: string, allowlist: string | undefined): boolean
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
   return allowed.includes(email.toLowerCase());
+}
+
+export interface ProvisionEnv {
+  APP_ENV?: string;
+  STAFF_BOOTSTRAP_ADMINS?: string;
+  STAFF_AUTO_PROVISION_DOMAIN?: string;
+}
+
+/**
+ * Decide what role, if any, an authenticated but unknown email should be
+ * created with.
+ *
+ * Two paths, deliberately different in power:
+ *  - STAFF_BOOTSTRAP_ADMINS: an explicit address list, provisioned as admin.
+ *  - STAFF_AUTO_PROVISION_DOMAIN: anyone at one domain, provisioned as
+ *    OPERATOR only, and only outside production. This lets a group of testers
+ *    sign themselves in without anyone maintaining a list, at the cost of
+ *    trusting everyone who can receive mail at that domain. That trade is fine
+ *    for sandbox money and unacceptable for real money, hence the env guard.
+ *
+ * Returns null when the address should not be provisioned at all.
+ */
+export function autoProvisionRole(email: string, env: ProvisionEnv): Role | null {
+  const normalised = email.trim().toLowerCase();
+  if (isBootstrapAdmin(normalised, env.STAFF_BOOTSTRAP_ADMINS)) return "admin";
+
+  if (env.APP_ENV === "production") return null;
+  const domain = env.STAFF_AUTO_PROVISION_DOMAIN?.trim().toLowerCase();
+  if (!domain) return null;
+
+  // Compare the domain part exactly. endsWith() would accept both
+  // "someone@notexcelcapital.co.uk" and "excelcapital.co.uk@evil.example".
+  const at = normalised.lastIndexOf("@");
+  if (at === -1) return null;
+  return normalised.slice(at + 1) === domain ? "operator" : null;
 }
 
 export async function requireUser(): Promise<StaffUser> {

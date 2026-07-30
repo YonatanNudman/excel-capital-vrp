@@ -134,6 +134,23 @@ For a custom production hostname later: add a zone, attach a Custom Domain to
 the Worker, create a matching Access app, and disable the public workers.dev
 route.
 
+## Tester access to staging (Excel Capital)
+
+Cloudflare Access allows any address at `excelcapital.co.uk`, plus the named
+admin. On first sign-in the app provisions a domain address as **operator**
+(collect, pause, retry) and never as admin, via
+`STAFF_AUTO_PROVISION_DOMAIN` in the staging block of `wrangler.jsonc`.
+
+Testers just open the URL and enter their work email; Access emails a one-time
+PIN. Nobody maintains a list.
+
+This deliberately trusts everyone who can receive mail at that domain, which is
+acceptable for sandbox money only. `autoProvisionRole` in `src/lib/auth.ts`
+refuses domain provisioning when `APP_ENV=production`, and the variable is
+absent from the production env. Production staff must be added deliberately.
+Covered by `tests/auth-provisioning.test.ts`, including lookalike domains such
+as `notexcelcapital.co.uk` and `excelcapital.co.uk@evil.example`.
+
 ## Automated E2E access to staging (service token)
 
 Staging login is a human one-time PIN, which automation cannot receive. A single
