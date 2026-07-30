@@ -176,16 +176,15 @@ This path must never be configured in production. There are three independent
 guards: the variables are absent from the production env, the code refuses when
 `APP_ENV=production`, and `tests/access.test.ts` asserts that refusal.
 
-## Plaid dashboard configuration (BLOCKS borrower testing)
+## Plaid dashboard configuration
 
-Two items must be done in the Plaid dashboard by an account owner. Neither is a
-code change, and bank connection cannot work without them.
-
-1. **Register the OAuth redirect URI.** The app sends
-   `{APP_BASE_URL}/setup/complete`. Without it, `/link/token/create` fails with
-   "OAuth redirect URI must be configured in the developer dashboard". Register:
+1. **OAuth redirect URI: DONE for staging (2026-07-30).**
    `https://excel-capital-vrp-staging.excel-capital.workers.dev/setup/complete`
-   and the production hostname later. See https://plaid.com/docs/#oauth-redirect-uris
+   is registered, and staging was verified creating a real link token after it
+   was added. The production hostname will need the same treatment at go-live.
+   The value comes from `{APP_BASE_URL}/setup/complete`, so changing
+   APP_BASE_URL means registering a new URI. See
+   https://plaid.com/docs/#oauth-redirect-uris
 
 2. **Request commercial VRP access.** `type: "COMMERCIAL"` currently returns
    UNAUTHORIZED_ROUTE_ACCESS, meaning the account is not entitled to it. This

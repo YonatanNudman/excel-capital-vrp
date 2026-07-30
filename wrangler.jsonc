@@ -75,8 +75,18 @@
 				// can drive staging without a human one-time PIN. Intentionally
 				// absent from the production env below, and src/lib/access.ts
 				// refuses this path outright when APP_ENV=production.
-				"ACCESS_SERVICE_TOKEN_CN": "fe2d68d9fa57529df430962a8f984970.access",
-				"ACCESS_SERVICE_ACCOUNT_EMAIL": "e2e-bot@excel-capital.invalid",
+				// Public base URL of this deployment. Setup links are built from it,
+				// and it forms the Plaid OAuth redirect ({APP_BASE_URL}/setup/complete)
+				// which must stay registered in the Plaid dashboard.
+				"APP_BASE_URL": "https://excel-capital-vrp-staging.excel-capital.workers.dev",
+				// Where Plaid posts payment status updates. Without it, payments are
+				// submitted but never settle on their own.
+				"PLAID_WEBHOOK_URL": "https://excel-capital-vrp-staging.excel-capital.workers.dev/api/webhooks/plaid",
+				// TEMPORARY: Plaid has not enabled commercial VRP on this account yet,
+				// and COMMERCIAL returns UNAUTHORIZED_ROUTE_ACCESS. Sweeping lets
+				// testers exercise everything else. REMOVE this line once Plaid grants
+				// commercial access. Production refuses anything but COMMERCIAL.
+				"PLAID_CONSENT_TYPE": "SWEEPING",
 				// Excel Capital testers sign themselves in with any address at this
 				// domain and are provisioned as OPERATOR (never admin). Staging only:
 				// src/lib/auth.ts refuses domain provisioning when APP_ENV=production,
