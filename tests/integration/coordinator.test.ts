@@ -77,13 +77,17 @@ describe("BorrowerPaymentCoordinator (per-borrower lock)", () => {
     expect(keys?.distinct_keys).toBe(keys?.total);
   });
 
-  it("KNOWN GAP: two collections seconds apart both succeed (the lock only covers overlap)", async () => {
-    const b = await seedCollectableBorrower("Sequential Risk Ltd");
+  it("allows two deliberate ad-hoc collections seconds apart (they are not duplicates)", async () => {
+    const b = await seedCollectableBorrower("Sequential Ad Hoc Ltd");
 
-    // This documents current behaviour, it is not an endorsement of it. A cron
-    // sweep and a staff "execute now" that do not overlap in time both go
-    // through, because the lease is released as soon as the first finishes and
-    // manualKey() is randomised so it never collides with the cron key.
+    // The lock only covers collections that overlap in time, so two calls with
+    // DIFFERENT keys both go through. That is correct for ad-hoc collections,
+    // which staff request deliberately and one at a time behind a confirm step.
+    //
+    // A SCHEDULED collection cannot reach this state: executePaymentNowAction
+    // reuses the cron's deterministic scheduledKey() and refuses outright if a
+    // payment already exists for that schedule today, so cron and a manual
+    // "execute now" for the same due date collapse to one payment.
     const first = await collectPaymentCoordinated(env, {
       borrowerId: b.id,
       amountMinor: 5000,

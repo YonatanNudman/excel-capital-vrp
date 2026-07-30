@@ -21,18 +21,27 @@ import { newId } from "@/lib/ids";
 import { toMinorUnits } from "@/lib/money";
 import { amountForRun } from "@/lib/schedule";
 
-function outcomeMessage(o: CollectOutcome): string {
+/**
+ * Turn an engine outcome into something a non-technical operator can act on.
+ * The tone drives the colour of the result banner, so "nothing bad happened"
+ * never looks like a failure and vice versa.
+ */
+function outcomeMessage(o: CollectOutcome): ActionResult {
   switch (o.kind) {
     case "collected":
-      return `Submitted (${o.plaidStatus}).`;
+      return { message: "Payment sent to the bank. It will show below as it settles.", tone: "success" };
     case "duplicate":
-      return "Already submitted (idempotent, no duplicate created).";
+      return { message: "This payment was already sent. Nothing was charged twice.", tone: "info" };
     case "skipped":
-      return `Skipped: ${o.reason}.`;
+      return { message: `Nothing was sent: ${o.reason}.`, tone: "info" };
     case "failed":
-      return `Failed: ${o.reason}.`;
+      return { message: `The payment did not go through: ${o.reason}.`, tone: "error" };
     case "unknown":
-      return "Payment status is being confirmed. Do not submit it again.";
+      return {
+        message:
+          "The bank has not confirmed this one yet. We are checking. Do not send it again.",
+        tone: "info",
+      };
   }
 }
 
@@ -41,7 +50,12 @@ async function borrowerToken(db: D1Database, borrowerId: string): Promise<string
   return (b?.company_number || b?.legal_name || borrowerId).slice(0, 8).toUpperCase();
 }
 
-export type ActionState = { message: string } | null;
+export type ActionTone = "success" | "info" | "error";
+export interface ActionResult {
+  message: string;
+  tone: ActionTone;
+}
+export type ActionState = ActionResult | null;
 
 /** Manual one-off collection. Amount defaults to the active schedule amount. */
 export async function executePaymentNowAction(
@@ -52,9 +66,9 @@ export async function executePaymentNowAction(
   const db = getDb();
   const env = getEnv();
   const borrowerId = String(fd.get("borrowerId") ?? "");
-  if (!borrowerId) return { message: "borrowerId required" };
+  if (!borrowerId) return { message: "Something went wrong: no borrower was selected.", tone: "error" };
   if (String(env.COLLECTIONS_ENABLED) !== "true") {
-    return { message: "Collections are disabled by the go-live safety switch." };
+    return { message: "Collections are switched off right now, so nothing was sent.", tone: "info" };
   }
 
   const overrideAmount = fd.get("amount");
@@ -68,7 +82,7 @@ export async function executePaymentNowAction(
     !(typeof overrideAmount === "string" && overrideAmount.trim()) &&
     await getSchedulePaymentCreatedOn(db, schedule.id, today)
   ) {
-    return { message: "Today's scheduled payment is already submitted. No duplicate was created." };
+    return { message: "Today's payment was already sent. Nothing was charged twice.", tone: "info" };
   }
   let amountMinor: number | null = null;
   if (typeof overrideAmount === "string" && overrideAmount.trim()) {
@@ -82,7 +96,7 @@ export async function executePaymentNowAction(
     }
   }
   if (!amountMinor || amountMinor <= 0) {
-    return { message: "No amount set (add a schedule or enter an amount)." };
+    return { message: "No amount to collect. Add a repayment schedule first.", tone: "error" };
   }
 
   const settings = await getSettings(db);
@@ -122,7 +136,7 @@ export async function executePaymentNowAction(
 
   revalidatePath(`/borrowers/${borrowerId}`);
   revalidatePath("/payments");
-  return { message: outcomeMessage(outcome) };
+  return outcomeMessage(outcome);
 }
 
 /** Retry a failed payment as a distinct attempt (new idempotency key). */
@@ -134,15 +148,15 @@ export async function retryPaymentAction(
   const db = getDb();
   const env = getEnv();
   if (String(env.COLLECTIONS_ENABLED) !== "true") {
-    return { message: "Collections are disabled by the go-live safety switch." };
+    return { message: "Collections are switched off right now, so nothing was sent.", tone: "info" };
   }
   const paymentId = String(fd.get("paymentId") ?? "");
-  if (!paymentId) return { message: "paymentId required" };
+  if (!paymentId) return { message: "Something went wrong: no payment was selected.", tone: "error" };
 
   const original = await getPayment(db, paymentId);
-  if (!original) return { message: "Payment not found." };
+  if (!original) return { message: "That payment no longer exists.", tone: "error" };
   if (original.status !== "failed") {
-    return { message: "Only failed payments can be retried." };
+    return { message: "Only failed payments can be retried.", tone: "info" };
   }
 
   const rootId = original.retry_of ?? original.id;
@@ -155,7 +169,7 @@ export async function retryPaymentAction(
     .bind(rootId)
     .first<typeof original>();
   if (!latest || latest.id !== original.id || latest.status !== "failed") {
-    return { message: "A newer attempt already exists. Refresh before retrying." };
+    return { message: "A newer attempt already exists. Refresh the page first.", tone: "info" };
   }
   const priorRetries = await db
     .prepare("SELECT COUNT(*) AS n FROM payments WHERE retry_of = ?")
@@ -165,7 +179,7 @@ export async function retryPaymentAction(
 
   const settings = await getSettings(db);
   if (attempt > settings.default_retry_max) {
-    return { message: `Retry limit (${settings.default_retry_max}) reached.` };
+    return { message: `Already retried ${settings.default_retry_max} times, which is the limit.`, tone: "info" };
   }
 
   const idempotencyKey = retryKey(rootId, attempt);
@@ -195,5 +209,5 @@ export async function retryPaymentAction(
 
   revalidatePath(`/borrowers/${original.borrower_id}`);
   revalidatePath("/payments");
-  return { message: outcomeMessage(outcome) };
+  return outcomeMessage(outcome);
 }

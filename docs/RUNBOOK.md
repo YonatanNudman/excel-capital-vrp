@@ -13,6 +13,9 @@ Operational procedures. Keep this current as infrastructure changes.
   `X-Dev-User-Email: you@example.com` header to simulate a signed-in staff user.
   The first authenticated email becomes an admin (bootstrap).
 - Tests: `npm test` (unit + D1 integration). `npm run typecheck` for types.
+- NOTE: `next dev` does NOT register the BorrowerPaymentCoordinator Durable
+  Object, so any collection fails locally with "no such actor class". Use
+  `npx wrangler dev --local` to exercise payments, or test them on staging.
 - Trigger the cron sweep locally: `curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+6+*+*+*"`
   or `POST /api/cron/run` with `Authorization: Bearer $CRON_SECRET`.
 
@@ -208,24 +211,26 @@ Do NOT set `PLAID_ENV=production` or production Plaid secrets until:
 - All scenario evals pass in CI.
 - Commercial VRP is enabled on the Plaid account and `PLAID_CONSENT_TYPE` is
   COMMERCIAL (production refuses anything else).
-- A decision has been made on the cron-vs-manual double-collection gap below.
-- Owner (Yonatan) has explicitly approved production.
 
-### Open risk: cron and manual execute can both collect
+### Double-collection defences (verified 2026-07-30)
 
-The per-borrower Durable Object lock only blocks collections that overlap in
-time. A cron sweep and a staff "execute now" a few seconds apart both succeed,
-because the lease is released as soon as the first finishes and `manualKey()`
-is randomised so it never collides with the deterministic cron key. The
-borrower is charged twice. Documented by the test named "KNOWN GAP" in
+Three independent layers, so no single mistake charges a borrower twice:
+
+1. `executePaymentNowAction` refuses outright if a payment already exists for
+   that schedule today (`getSchedulePaymentCreatedOn`).
+2. A manual "execute now" that settles a due schedule reuses the cron's
+   DETERMINISTIC `scheduledKey(borrower, schedule, dueDate)`, so it collides
+   with the cron run and returns `duplicate` instead of creating a second row.
+3. The Durable Object lease serialises anything that does overlap in time.
+
+Confirmed live on staging: pressing "Execute payment now" after the scheduled
+payment had been submitted reported "Today's payment was already sent" and
+created no second payment.
+
+Ad-hoc collections with an explicit override amount deliberately use a random
+key and are NOT deduped, because staff request them one at a time behind a
+confirm step. That is intended, and is covered by a test in
 `tests/integration/coordinator.test.ts`.
-
-Two ways to close it, both product decisions:
-- Give a manual execute that is settling a schedule the same deterministic key
-  as the cron run, so the second attempt dedupes as a duplicate. Ad-hoc
-  collections unrelated to a schedule keep the random key.
-- Or have the coordinator refuse a second collection for the same borrower
-  inside a short cooldown window unless explicitly overridden.
 
 `COLLECTIONS_ENABLED` is a separate final kill switch and defaults to `false` in
 all Wrangler environments. Keep it false while applying migrations and running
