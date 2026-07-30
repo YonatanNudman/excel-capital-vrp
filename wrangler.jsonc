@@ -68,13 +68,8 @@
 			"vars": {
 				"PLAID_ENV": "sandbox",
 				"APP_ENV": "staging",
-				"COLLECTIONS_ENABLED": "false",
+				"COLLECTIONS_ENABLED": "true",
 				"STAFF_BOOTSTRAP_ADMINS": "nudman.yonatan@gmail.com",
-				// Automated end-to-end testing only. Maps the "E2E Sandbox Test"
-				// Access service token to an operator-role service account, so tests
-				// can drive staging without a human one-time PIN. Intentionally
-				// absent from the production env below, and src/lib/access.ts
-				// refuses this path outright when APP_ENV=production.
 				// Public base URL of this deployment. Setup links are built from it,
 				// and it forms the Plaid OAuth redirect ({APP_BASE_URL}/setup/complete)
 				// which must stay registered in the Plaid dashboard.
