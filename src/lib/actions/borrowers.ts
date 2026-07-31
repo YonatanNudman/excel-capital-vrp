@@ -6,6 +6,10 @@ import { getDb, getEnv } from "@/lib/db";
 import { requireRole } from "@/lib/auth";
 import { writeAudit } from "@/lib/repo/audit";
 import {
+  getCompaniesHouseClient,
+  isLendableStatus,
+} from "@/lib/companies-house";
+import {
   createBorrower,
   setBorrowerStatus,
   updateBorrower,
@@ -65,9 +69,48 @@ export async function createBorrowerAction(fd: FormData): Promise<void> {
     throw new Error("Sort code must contain 6 digits");
   }
 
+  // Verify the company against Companies House and use the official name, so a
+  // borrower record can never disagree with the register. Enforcement is a
+  // separate switch: staging testers work with invented companies, production
+  // should not. Verified is always preferred over typed, either way.
+  let companyNumber = str(fd, "companyNumber");
+  let verifiedName: string | null = null;
+  const enforce = String(env.COMPANIES_HOUSE_ENFORCE) === "true";
+  const chClient = getCompaniesHouseClient(env);
+
+  if (chClient && companyNumber) {
+    const company = await chClient.getCompany(companyNumber).catch((error: unknown) => {
+      // A Companies House outage must not block onboarding unless we are
+      // enforcing, in which case failing closed is the safer default.
+      console.error("companies house verification failed", error);
+      if (enforce) {
+        throw new Error(
+          "Could not check this company against Companies House. Try again shortly.",
+        );
+      }
+      return null;
+    });
+
+    if (company) {
+      companyNumber = company.companyNumber;
+      verifiedName = company.name;
+      if (enforce && !isLendableStatus(company.status)) {
+        throw new Error(
+          `${company.name} is ${company.status ?? "not active"} on Companies House, not active. It cannot be onboarded.`,
+        );
+      }
+    } else if (enforce) {
+      throw new Error(
+        `Company number ${companyNumber} is not on the Companies House register. Use the search to pick the company.`,
+      );
+    }
+  } else if (enforce && !companyNumber) {
+    throw new Error("A company number is required. Use the search to pick the company.");
+  }
+
   const borrower = await createBorrower(db, {
-    legalName,
-    companyNumber: str(fd, "companyNumber"),
+    legalName: verifiedName ?? legalName,
+    companyNumber,
     contactEmail,
     contactPhone: str(fd, "contactPhone"),
     createdBy: user.id,

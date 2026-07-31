@@ -48,3 +48,10 @@ COLLECTIONS_ENABLED=false
 
 # --- Local dev only ---
 APP_ENV=development
+
+# --- Companies House (free API key from developer.company-information.service.gov.uk) ---
+# Blank disables the lookup entirely; the form falls back to manual entry.
+COMPANIES_HOUSE_API_KEY=
+# "true" requires every borrower to exist and be active on the register.
+# Keep false on staging so testers can use invented companies.
+COMPANIES_HOUSE_ENFORCE=false

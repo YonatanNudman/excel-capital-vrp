@@ -86,7 +86,10 @@
 				// domain and are provisioned as OPERATOR (never admin). Staging only:
 				// src/lib/auth.ts refuses domain provisioning when APP_ENV=production,
 				// where staff must be added deliberately.
-				"STAFF_AUTO_PROVISION_DOMAIN": "excelcapital.co.uk"
+				"STAFF_AUTO_PROVISION_DOMAIN": "excelcapital.co.uk",
+				// Testers onboard invented companies, so verification informs but does
+				// not block here. Production requires a real, active company.
+				"COMPANIES_HOUSE_ENFORCE": "false"
 			},
 			"images": { "binding": "IMAGES" },
 			"durable_objects": {
@@ -116,6 +119,8 @@
 				// Must be stated explicitly in production; getPlaidClient refuses to
 				// start without it rather than inheriting a default.
 				"PLAID_CONSENT_TYPE": "SWEEPING",
+				// Every production borrower must be a real, active registered company.
+				"COMPANIES_HOUSE_ENFORCE": "true",
 				"STAFF_BOOTSTRAP_ADMINS": "yonatan@thepipelinegroup.io"
 			},
 			"images": { "binding": "IMAGES" },

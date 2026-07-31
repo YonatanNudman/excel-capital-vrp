@@ -2,6 +2,9 @@ import Link from "next/link";
 import { createBorrowerAction } from "@/lib/actions/borrowers";
 
 import { WeekdayPicker } from "@/components/weekday-picker";
+import { CompanyLookup } from "@/components/company-lookup";
+import { isCompaniesHouseConfigured } from "@/lib/companies-house";
+import { getEnv } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -54,6 +57,9 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 export default function NewBorrowerPage() {
+  // Only offer the register lookup when an API key is configured; otherwise the
+  // form is plain manual entry.
+  const companiesHouseReady = isCompaniesHouseConfigured(getEnv());
   return (
     <div className="mx-auto max-w-3xl">
       <div className="mb-6">
@@ -70,6 +76,7 @@ export default function NewBorrowerPage() {
 
       <form action={createBorrowerAction} className="space-y-5">
         <Section title="Business">
+          {companiesHouseReady && <CompanyLookup />}
           <Field label="Legal name" name="legalName" required placeholder="Acme Trading Ltd" />
           <Field label="Company number" name="companyNumber" placeholder="12345678" />
           <Field label="Contact email" name="contactEmail" type="email" />

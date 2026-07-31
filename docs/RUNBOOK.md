@@ -179,6 +179,34 @@ This path must never be configured in production. There are three independent
 guards: the variables are absent from the production env, the code refuses when
 `APP_ENV=production`, and `tests/access.test.ts` asserts that refusal.
 
+## Companies House lookup
+
+Onboarding can search the register so a borrower's legal name and company number
+always match Companies House rather than being typed by hand.
+
+Setup (one step, free):
+1. Register at https://developer.company-information.service.gov.uk/ and create
+   an application key for the **Public Data API**.
+2. `npx wrangler secret put COMPANIES_HOUSE_API_KEY --env staging`
+   (and `--env production` at go-live).
+
+Behaviour:
+- No key configured: the search box does not render and onboarding is plain
+  manual entry. Nothing breaks.
+- Key configured: staff search by name or number, and picking a result fills the
+  official name and number. Non-active companies (dissolved, liquidation and so
+  on) are flagged in amber at the point of choosing.
+- `COMPANIES_HOUSE_ENFORCE` decides whether verification is advisory or binding.
+  It is `false` on staging, so testers can onboard invented companies, and
+  `true` on production, where a borrower must exist on the register AND be
+  active. When enforcing, a Companies House outage fails closed rather than
+  letting an unverified company through.
+- The API key is a Worker secret. The browser talks to `/api/companies/search`,
+  which requires an operator role, so the key never reaches the client and the
+  search is not a public endpoint.
+- Field names differ between endpoints: search results use `title`, the company
+  profile uses `company_name`. Both are pinned by tests/companies-house.test.ts.
+
 ## Plaid consent type: SWEEPING (settled 2026-07-31)
 
 1. **OAuth redirect URI: DONE for staging.**
