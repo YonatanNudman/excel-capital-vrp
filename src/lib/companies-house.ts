@@ -24,7 +24,37 @@ export interface CompanyMatch {
   status: string | null;
   type: string | null;
   incorporatedOn: string | null;
+  /** Registered office, formatted for display. Search returns a snippet. */
   address: string | null;
+  /** Only available from the company profile, not from search results. */
+  postcode?: string | null;
+}
+
+/**
+ * The registered office as one display line, in postal order.
+ *
+ * Field names per the Companies House registeredOfficeAddress resource. Absent
+ * or blank parts are dropped so the result never contains empty gaps.
+ */
+function formatRegisteredAddress(raw: unknown): { address: string | null; postcode: string | null } {
+  if (!raw || typeof raw !== "object") return { address: null, postcode: null };
+  const a = raw as Record<string, unknown>;
+  const parts = [
+    "premises",
+    "address_line_1",
+    "address_line_2",
+    "locality",
+    "region",
+    "postal_code",
+    "country",
+  ]
+    .map((key) => readString(a, key))
+    .filter((v): v is string => Boolean(v))
+    .map((v) => v.trim());
+  return {
+    address: parts.length > 0 ? parts.join(", ") : null,
+    postcode: readString(a, "postal_code"),
+  };
 }
 
 export class CompaniesHouseError extends Error {
@@ -135,13 +165,15 @@ export class CompaniesHouseClient {
     const resolvedNumber = readString(body, "company_number") ?? number;
     if (!name) return null;
 
+    const office = formatRegisteredAddress(body.registered_office_address);
     return {
       companyNumber: resolvedNumber,
       name,
       status: readString(body, "company_status"),
       type: readString(body, "type"),
       incorporatedOn: readString(body, "date_of_creation"),
-      address: null,
+      address: office.address,
+      postcode: office.postcode,
     };
   }
 }

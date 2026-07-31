@@ -48,14 +48,18 @@ export async function createBorrower(
     companyNumber?: string | null;
     contactEmail?: string | null;
     contactPhone?: string | null;
+    registeredAddress?: string | null;
+    registeredPostcode?: string | null;
     createdBy: string | null;
   },
 ): Promise<Borrower> {
   const id = newId();
   await db
     .prepare(
-      `INSERT INTO borrowers (id, legal_name, company_number, contact_email, contact_phone, created_by)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO borrowers
+         (id, legal_name, company_number, contact_email, contact_phone,
+          registered_address, registered_postcode, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -63,6 +67,8 @@ export async function createBorrower(
       data.companyNumber ?? null,
       data.contactEmail ?? null,
       data.contactPhone ?? null,
+      data.registeredAddress ?? null,
+      data.registeredPostcode ?? null,
       data.createdBy,
     )
     .run();

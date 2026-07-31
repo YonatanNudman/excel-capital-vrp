@@ -160,6 +160,10 @@ export default async function BorrowerProfile({
           <Row label="Company number" value={borrower.company_number} />
           <Row label="Contact email" value={borrower.contact_email} />
           <Row label="Contact phone" value={borrower.contact_phone} />
+          <Row
+            label="Registered office"
+            value={borrower.registered_address}
+          />
         </Card>
 
         <Card title="Recipient">

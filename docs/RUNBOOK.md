@@ -186,7 +186,11 @@ always match Companies House rather than being typed by hand.
 
 Setup (one step, free):
 1. Register at https://developer.company-information.service.gov.uk/ and create
-   an application key for the **Public Data API**.
+   a **REST** key for the Public Data API. Not Streaming (a change firehose) and
+   not Web (OAuth, for users signing in with their own CH identity).
+   Leave "Restricted IPs" EMPTY: Cloudflare Workers egress from many rotating
+   IPs, so pinning one would break every call. Leave "JavaScript domains" EMPTY
+   too: the key is only ever used server-side, never from the browser.
 2. `npx wrangler secret put COMPANIES_HOUSE_API_KEY --env staging`
    (and `--env production` at go-live).
 
@@ -206,6 +210,10 @@ Behaviour:
   search is not a public endpoint.
 - Field names differ between endpoints: search results use `title`, the company
   profile uses `company_name`. Both are pinned by tests/companies-house.test.ts.
+- The registered office is pulled from the company profile at onboarding and
+  stored on the borrower (migration 0005: `registered_address` as one formatted
+  display line in postal order, plus `registered_postcode`). It shows on the
+  borrower profile under Business. Borrowers entered by hand simply have none.
 
 ## Plaid consent type: SWEEPING (settled 2026-07-31)
 

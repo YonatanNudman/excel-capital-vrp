@@ -188,3 +188,65 @@ describe("isLendableStatus", () => {
     expect(isLendableStatus("something-new")).toBe(false);
   });
 });
+
+describe("registered office address", () => {
+  const withAddress = (address: Record<string, unknown>) => ({
+    company_name: "ADDRESS LTD",
+    company_number: "11112222",
+    company_status: "active",
+    type: "ltd",
+    date_of_creation: "2021-03-04",
+    registered_office_address: address,
+  });
+
+  it("formats the address in postal order and exposes the postcode separately", async () => {
+    stubFetch(
+      withAddress({
+        premises: "Unit 4",
+        address_line_1: "12 High Street",
+        address_line_2: "Northside",
+        locality: "London",
+        region: "Greater London",
+        postal_code: "EC1A 1AA",
+        country: "England",
+      }),
+    );
+    const c = await client.getCompany("11112222");
+    expect(c?.address).toBe(
+      "Unit 4, 12 High Street, Northside, London, Greater London, EC1A 1AA, England",
+    );
+    expect(c?.postcode).toBe("EC1A 1AA");
+  });
+
+  it("skips the parts that are absent rather than leaving gaps", async () => {
+    stubFetch(
+      withAddress({ address_line_1: "1 The Lane", locality: "Leeds", postal_code: "LS1 1AA" }),
+    );
+    const c = await client.getCompany("11112222");
+    expect(c?.address).toBe("1 The Lane, Leeds, LS1 1AA");
+  });
+
+  it("ignores blank strings", async () => {
+    stubFetch(
+      withAddress({ address_line_1: "1 The Lane", address_line_2: "   ", locality: "Leeds" }),
+    );
+    expect((await client.getCompany("11112222"))?.address).toBe("1 The Lane, Leeds");
+  });
+
+  it("returns null when the profile carries no address at all", async () => {
+    stubFetch({
+      company_name: "NO ADDRESS LTD",
+      company_number: "33334444",
+      company_status: "active",
+    });
+    const c = await client.getCompany("33334444");
+    expect(c?.address).toBeNull();
+    expect(c?.postcode).toBeNull();
+  });
+
+  it("survives an address that is not an object", async () => {
+    stubFetch({ ...withAddress({}), registered_office_address: "not an object" });
+    const c = await client.getCompany("11112222");
+    expect(c?.address).toBeNull();
+  });
+});

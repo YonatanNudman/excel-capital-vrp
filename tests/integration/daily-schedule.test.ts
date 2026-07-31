@@ -156,3 +156,32 @@ describe("migration 0004 did not damage foreign keys", () => {
     expect(rows.results.map((r) => r.name)).toEqual(["repayment_schedules"]);
   });
 });
+
+describe("borrower registered address (migration 0005)", () => {
+  it("stores and reads back the registered office and postcode", async () => {
+    const { createBorrower, getBorrower } = await import("@/lib/repo/borrowers");
+    const b = await createBorrower(env.DB, {
+      legalName: "REGISTERED OFFICE LTD",
+      companyNumber: "17104767",
+      registeredAddress: "Unit 4, 12 High Street, London, EC1A 1AA, England",
+      registeredPostcode: "EC1A 1AA",
+      createdBy: null,
+    });
+    const loaded = await getBorrower(env.DB, b.id);
+    expect(loaded?.registered_address).toBe(
+      "Unit 4, 12 High Street, London, EC1A 1AA, England",
+    );
+    expect(loaded?.registered_postcode).toBe("EC1A 1AA");
+  });
+
+  it("leaves the address null for a borrower entered by hand", async () => {
+    const { createBorrower, getBorrower } = await import("@/lib/repo/borrowers");
+    const b = await createBorrower(env.DB, {
+      legalName: "MANUAL ENTRY LTD",
+      createdBy: null,
+    });
+    const loaded = await getBorrower(env.DB, b.id);
+    expect(loaded?.registered_address).toBeNull();
+    expect(loaded?.registered_postcode).toBeNull();
+  });
+});

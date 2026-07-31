@@ -51,6 +51,9 @@ export interface Borrower {
   company_number: string | null;
   contact_email: string | null;
   contact_phone: string | null;
+  /** Registered office from Companies House, formatted for display. */
+  registered_address: string | null;
+  registered_postcode: string | null;
   status: BorrowerStatus;
   deleted_at: string | null;
   created_at: string;

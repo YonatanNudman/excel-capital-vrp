@@ -75,6 +75,8 @@ export async function createBorrowerAction(fd: FormData): Promise<void> {
   // should not. Verified is always preferred over typed, either way.
   let companyNumber = str(fd, "companyNumber");
   let verifiedName: string | null = null;
+  let registeredAddress: string | null = null;
+  let registeredPostcode: string | null = null;
   const enforce = String(env.COMPANIES_HOUSE_ENFORCE) === "true";
   const chClient = getCompaniesHouseClient(env);
 
@@ -94,6 +96,8 @@ export async function createBorrowerAction(fd: FormData): Promise<void> {
     if (company) {
       companyNumber = company.companyNumber;
       verifiedName = company.name;
+      registeredAddress = company.address;
+      registeredPostcode = company.postcode ?? null;
       if (enforce && !isLendableStatus(company.status)) {
         throw new Error(
           `${company.name} is ${company.status ?? "not active"} on Companies House, not active. It cannot be onboarded.`,
@@ -113,6 +117,8 @@ export async function createBorrowerAction(fd: FormData): Promise<void> {
     companyNumber,
     contactEmail,
     contactPhone: str(fd, "contactPhone"),
+    registeredAddress,
+    registeredPostcode,
     createdBy: user.id,
   });
 
