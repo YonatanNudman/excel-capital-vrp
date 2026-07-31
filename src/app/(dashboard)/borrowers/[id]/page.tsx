@@ -16,6 +16,7 @@ import {
   SetupLinkButton,
 } from "@/components/action-buttons";
 import { formatMinor } from "@/lib/money";
+import { setupReadiness } from "@/lib/readiness";
 
 export const dynamic = "force-dynamic";
 
@@ -79,6 +80,8 @@ export default async function BorrowerProfile({
   ]);
   const canOperate = user ? hasRole(user, "operator") : false;
   const paused = borrower.status === "paused";
+  // Surface an incomplete setup here rather than letting the borrower hit it.
+  const readiness = setupReadiness(recipient, consent);
   const env = getEnv();
   const accountNumber = await unprotectString(recipient?.account_number, env.APP_ENCRYPTION_KEY);
   const sortCode = await unprotectString(recipient?.sort_code, env.APP_ENCRYPTION_KEY);
@@ -94,6 +97,28 @@ export default async function BorrowerProfile({
           <StatusBadge status={borrower.status} />
         </div>
       </div>
+
+      {canOperate && !readiness.ready && (
+        <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4">
+          <h2 className="text-sm font-semibold text-amber-900">
+            Not ready to send to the borrower yet
+          </h2>
+          <p className="mt-1 text-sm text-amber-900">
+            The borrower cannot connect their bank until these are filled in.
+          </p>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-900">
+            {readiness.missing.map((m) => (
+              <li key={m}>{m}</li>
+            ))}
+          </ul>
+          <Link
+            href={`/borrowers/${borrower.id}/edit`}
+            className="mt-3 inline-block rounded-md bg-amber-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-800"
+          >
+            Fill these in
+          </Link>
+        </div>
+      )}
 
       {canOperate && (
         <div className="mb-6 flex flex-wrap items-start gap-3 rounded-lg border border-slate-200 bg-white p-4">

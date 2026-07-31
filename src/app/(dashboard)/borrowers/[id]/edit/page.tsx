@@ -2,7 +2,12 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb } from "@/lib/db";
 import { getBorrower } from "@/lib/repo/borrowers";
+import { getRecipient } from "@/lib/repo/recipients";
+import { getActiveConsent } from "@/lib/repo/consents";
+import { unprotectString } from "@/lib/crypto";
+import { getEnv } from "@/lib/db";
 import { updateBorrowerDetailsAction } from "@/lib/actions/borrowers";
+import { BankLimitsForm } from "@/components/bank-limits-form";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +20,16 @@ export default async function EditBorrowerPage({
   const db = getDb();
   const borrower = await getBorrower(db, id);
   if (!borrower) notFound();
+
+  const env = getEnv();
+  const [recipient, consent] = await Promise.all([
+    getRecipient(db, id),
+    getActiveConsent(db, id),
+  ]);
+  const accountNumber = await unprotectString(recipient?.account_number, env.APP_ENCRYPTION_KEY);
+  const sortCode = await unprotectString(recipient?.sort_code, env.APP_ENCRYPTION_KEY);
+  const major = (minor: number | null | undefined) =>
+    minor == null ? "" : (minor / 100).toFixed(2);
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -79,6 +94,22 @@ export default async function EditBorrowerPage({
           </button>
         </div>
       </form>
+
+      <h2 className="mt-8 mb-3 text-lg font-semibold tracking-tight">
+        Bank details and payment limits
+      </h2>
+      <BankLimitsForm
+        borrowerId={id}
+        locked={consent?.status === "authorized"}
+        defaults={{
+          recipientName: recipient?.name ?? "",
+          accountNumber: accountNumber ?? "",
+          sortCode: sortCode ?? "",
+          maxPaymentAmount: major(consent?.max_payment_amount_minor),
+          periodicMaxAmount: major(consent?.periodic_max_amount_minor),
+          consentPeriod: consent?.period ?? "",
+        }}
+      />
     </div>
   );
 }

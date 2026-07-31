@@ -178,3 +178,41 @@ export async function setConsentStatus(
       .run();
   }
 }
+
+/**
+ * Replace the limits on a consent that has NOT been authorised yet.
+ *
+ * Deliberately refuses to touch an authorised consent: those constraints are
+ * fixed at the bank once the borrower approves them, so editing our copy would
+ * silently disagree with what the borrower actually agreed to. Changing limits
+ * after authorisation requires a fresh consent (the re-consent flow).
+ */
+export async function updateUnauthorisedConsentLimits(
+  db: D1Database,
+  consentId: string,
+  limits: {
+    maxPaymentAmountMinor: number;
+    periodicMaxAmountMinor: number;
+    period: string;
+    validTo?: string | null;
+  },
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE consents
+          SET max_payment_amount_minor = ?,
+              periodic_max_amount_minor = ?,
+              period = ?,
+              valid_to = COALESCE(?, valid_to)
+        WHERE id = ? AND status <> 'authorized'`,
+    )
+    .bind(
+      limits.maxPaymentAmountMinor,
+      limits.periodicMaxAmountMinor,
+      limits.period,
+      limits.validTo ?? null,
+      consentId,
+    )
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}

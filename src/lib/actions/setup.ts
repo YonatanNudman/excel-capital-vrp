@@ -10,6 +10,9 @@ import {
   invalidateBorrowerLinks,
 } from "@/lib/repo/setup-links";
 import { getBorrower } from "@/lib/repo/borrowers";
+import { getRecipient } from "@/lib/repo/recipients";
+import { getActiveConsent } from "@/lib/repo/consents";
+import { setupReadiness } from "@/lib/readiness";
 import { getMailer, type MailerEnv } from "@/lib/mailer";
 import { setupLinkEmail } from "@/lib/mailer/templates";
 
@@ -31,7 +34,21 @@ export async function sendSetupLinkAction(
   const env = getEnv();
   const borrowerId = fd.get("borrowerId");
   if (typeof borrowerId !== "string" || !borrowerId) {
-    return { error: "borrowerId required" };
+    return { error: "Something went wrong: no borrower was selected." };
+  }
+
+  // Refuse to hand out a link that cannot possibly work. Plaid needs the
+  // destination account and both consent caps, and without this check the
+  // borrower is the one who discovers the gap, seeing only a generic error.
+  const [recipient, consent] = await Promise.all([
+    getRecipient(db, borrowerId),
+    getActiveConsent(db, borrowerId),
+  ]);
+  const readiness = setupReadiness(recipient, consent);
+  if (!readiness.ready) {
+    return {
+      error: `This borrower is not ready yet. ${readiness.missing.join(" ")}`,
+    };
   }
 
   await invalidateBorrowerLinks(db, borrowerId);
