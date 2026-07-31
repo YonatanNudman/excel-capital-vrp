@@ -4,7 +4,7 @@ import { getDb, getEnv } from "@/lib/db";
 import { unprotectString } from "@/lib/crypto";
 import { getBorrower } from "@/lib/repo/borrowers";
 import { getActiveConsent } from "@/lib/repo/consents";
-import { getActiveSchedule } from "@/lib/repo/schedules";
+import { getActiveSchedule, isStoredDaily, parseDaysOfWeek } from "@/lib/repo/schedules";
 import { getRecipient } from "@/lib/repo/recipients";
 import { listPaymentsForBorrower } from "@/lib/repo/payments";
 import { getCurrentUser, hasRole } from "@/lib/auth";
@@ -17,6 +17,7 @@ import {
 } from "@/components/action-buttons";
 import { formatMinor } from "@/lib/money";
 import { setupReadiness } from "@/lib/readiness";
+import type { RepaymentSchedule } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -41,18 +42,21 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-function scheduleSummary(s: {
-  amount_minor: number;
-  currency: string;
-  frequency: string;
-  interval_days: number | null;
-  end_mode: string;
-  end_date: string | null;
-  end_count: number | null;
-  end_total_minor: number | null;
-}): string {
-  const freq =
-    s.frequency === "custom" ? `every ${s.interval_days ?? "?"} days` : s.frequency;
+const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function scheduleSummary(s: RepaymentSchedule): string {
+  // A daily schedule is stored as custom/1-day plus a weekday list, so describe
+  // it as daily rather than as "every 1 days" (see migrations/0004).
+  let freq: string;
+  if (isStoredDaily(s)) {
+    const days = parseDaysOfWeek(s.days_of_week) ?? [];
+    freq =
+      days.length === 7
+        ? "daily"
+        : `daily on ${days.map((d) => DAY_LABELS[d - 1]).join(", ")}`;
+  } else {
+    freq = s.frequency === "custom" ? `every ${s.interval_days ?? "?"} days` : s.frequency;
+  }
   let end = "";
   if (s.end_mode === "count") end = `for ${s.end_count ?? "?"} payments`;
   else if (s.end_mode === "date") end = `until ${s.end_date ?? "?"}`;

@@ -181,21 +181,44 @@ describe("consent type selection", () => {
 describe("getPlaidClient consent-type guard", () => {
   const base = { PLAID_CLIENT_ID: "cid", PLAID_SECRET: "sec", PLAID_ENV: "sandbox" };
 
-  it("refuses a non-commercial consent type in production", () => {
+  // Plaid confirmed 2026-07-31 that this account is provisioned for SWEEPING and
+  // that sweeping is the correct type for collecting loan repayments. So the
+  // guard protects against a TYPO or an UNSTATED type, not against a particular
+  // choice, which is Plaid's to make.
+  it("allows SWEEPING in production, which is what Plaid provisioned", () => {
     expect(() =>
       getPlaidClient({ ...base, APP_ENV: "production", PLAID_CONSENT_TYPE: "SWEEPING" }),
-    ).toThrow(/COMMERCIAL in production/);
-  });
-
-  it("allows SWEEPING outside production", () => {
-    expect(() =>
-      getPlaidClient({ ...base, APP_ENV: "staging", PLAID_CONSENT_TYPE: "SWEEPING" }),
     ).not.toThrow();
   });
 
-  it("allows production when the type is commercial", () => {
+  it("allows COMMERCIAL in production if Plaid ever enables it", () => {
     expect(() =>
       getPlaidClient({ ...base, APP_ENV: "production", PLAID_CONSENT_TYPE: "COMMERCIAL" }),
     ).not.toThrow();
+  });
+
+  it("refuses to go live on an unstated consent type", () => {
+    expect(() => getPlaidClient({ ...base, APP_ENV: "production" })).toThrow(
+      /must be set explicitly in production/,
+    );
+  });
+
+  it("refuses a typo rather than sending it to Plaid", () => {
+    expect(() =>
+      getPlaidClient({ ...base, APP_ENV: "production", PLAID_CONSENT_TYPE: "SWEEPNIG" }),
+    ).toThrow(/must be one of/);
+    expect(() =>
+      getPlaidClient({ ...base, APP_ENV: "staging", PLAID_CONSENT_TYPE: "commercial-ish" }),
+    ).toThrow(/must be one of/);
+  });
+
+  it("accepts lowercase and stray whitespace", () => {
+    expect(() =>
+      getPlaidClient({ ...base, APP_ENV: "production", PLAID_CONSENT_TYPE: " sweeping " }),
+    ).not.toThrow();
+  });
+
+  it("defaults to SWEEPING outside production", () => {
+    expect(() => getPlaidClient({ ...base, APP_ENV: "staging" })).not.toThrow();
   });
 });

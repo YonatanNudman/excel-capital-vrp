@@ -33,6 +33,13 @@ function money(fd: FormData, key: string): number | null {
 }
 
 /** Full borrower onboarding: borrower + recipient + schedule + pending consent limits. */
+/** Checked weekday boxes arrive as repeated form values. */
+function days(fd: FormData): number[] | null {
+  const raw = fd.getAll("daysOfWeek").map((v) => Number(String(v)));
+  const valid = raw.filter((n) => Number.isInteger(n) && n >= 1 && n <= 7);
+  return valid.length > 0 ? valid : null;
+}
+
 export async function createBorrowerAction(fd: FormData): Promise<void> {
   const user = await requireRole("operator");
   const db = getDb();
@@ -83,6 +90,7 @@ export async function createBorrowerAction(fd: FormData): Promise<void> {
       amountMinor,
       frequency,
       intervalDays: num(fd, "intervalDays"),
+      daysOfWeek: days(fd),
       startDate,
       endMode,
       endDate: str(fd, "endDate"),
@@ -132,6 +140,7 @@ export async function updateScheduleAction(fd: FormData): Promise<void> {
     amountMinor,
     frequency,
     intervalDays: num(fd, "intervalDays"),
+    daysOfWeek: days(fd),
     startDate,
     endMode,
     endDate: str(fd, "endDate"),

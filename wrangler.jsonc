@@ -77,10 +77,10 @@
 				// Where Plaid posts payment status updates. Without it, payments are
 				// submitted but never settle on their own.
 				"PLAID_WEBHOOK_URL": "https://excel-capital-vrp-staging.excel-capital.workers.dev/api/webhooks/plaid",
-				// TEMPORARY: Plaid has not enabled commercial VRP on this account yet,
-				// and COMMERCIAL returns UNAUTHORIZED_ROUTE_ACCESS. Sweeping lets
-				// testers exercise everything else. REMOVE this line once Plaid grants
-				// commercial access. Production refuses anything but COMMERCIAL.
+				// Plaid (Tobi Jacob, 2026-07-31) confirmed this account is provisioned
+				// for SWEEPING and that sweeping is the correct consent type for
+				// collecting scheduled loan repayments. COMMERCIAL returns
+				// UNAUTHORIZED_ROUTE_ACCESS here.
 				"PLAID_CONSENT_TYPE": "SWEEPING",
 				// Excel Capital testers sign themselves in with any address at this
 				// domain and are provisioned as OPERATOR (never admin). Staging only:
@@ -113,6 +113,9 @@
 				"PLAID_ENV": "production",
 				"APP_ENV": "production",
 				"COLLECTIONS_ENABLED": "false",
+				// Must be stated explicitly in production; getPlaidClient refuses to
+				// start without it rather than inheriting a default.
+				"PLAID_CONSENT_TYPE": "SWEEPING",
 				"STAFF_BOOTSTRAP_ADMINS": "yonatan@thepipelinegroup.io"
 			},
 			"images": { "binding": "IMAGES" },

@@ -179,25 +179,30 @@ This path must never be configured in production. There are three independent
 guards: the variables are absent from the production env, the code refuses when
 `APP_ENV=production`, and `tests/access.test.ts` asserts that refusal.
 
-## Plaid dashboard configuration
+## Plaid consent type: SWEEPING (settled 2026-07-31)
 
-1. **OAuth redirect URI: DONE for staging (2026-07-30).**
+1. **OAuth redirect URI: DONE for staging.**
    `https://excel-capital-vrp-staging.excel-capital.workers.dev/setup/complete`
-   is registered, and staging was verified creating a real link token after it
-   was added. The production hostname will need the same treatment at go-live.
-   The value comes from `{APP_BASE_URL}/setup/complete`, so changing
-   APP_BASE_URL means registering a new URI. See
-   https://plaid.com/docs/#oauth-redirect-uris
+   is registered and verified. Production will need its own hostname registered
+   at go-live. The value is `{APP_BASE_URL}/setup/complete`, so changing
+   APP_BASE_URL means registering a new URI.
 
-2. **Request commercial VRP access.** `type: "COMMERCIAL"` currently returns
-   UNAUTHORIZED_ROUTE_ACCESS, meaning the account is not entitled to it. This
-   product REQUIRES commercial: it collects from a borrower's own account.
-   SWEEPING, which the account can already use, only authorises moving money
-   between accounts the same person owns, so it is not a substitute for real
-   use. `PLAID_CONSENT_TYPE=SWEEPING` unblocks sandbox testing of everything
-   else in the meantime; `getPlaidClient` refuses it when APP_ENV=production.
+2. **Consent type is SWEEPING, per Plaid.** Tobi Jacob at Plaid confirmed by
+   email on 2026-07-31 that this account is provisioned for Sweeping VRP and
+   that sweeping is the consent type Plaid considers correct for collecting
+   scheduled loan repayments from borrowers. COMMERCIAL returns
+   UNAUTHORIZED_ROUTE_ACCESS on this account.
 
-Until item 1 is done, borrower bank connection cannot be tested by anyone.
+   `PLAID_CONSENT_TYPE` is therefore set to SWEEPING in both staging and
+   production. `getPlaidClient` refuses an unrecognised value anywhere, and
+   refuses to start in production unless the value is set explicitly, so nobody
+   goes live on an inherited default.
+
+   Worth getting in writing, since it is a regulated money flow: sweeping is
+   conventionally described as moving money between accounts held by the SAME
+   party, and this flow is borrower to lender. Plaid have said it is the right
+   product for this use case; ask them to confirm that specific flow in writing
+   and keep it on file.
 
 ## Plaid go-live gate
 
@@ -209,8 +214,7 @@ Do NOT set `PLAID_ENV=production` or production Plaid secrets until:
 - Timeout-after-submit recovery has been observed via reconciliation without a
   second payment.
 - All scenario evals pass in CI.
-- Commercial VRP is enabled on the Plaid account and `PLAID_CONSENT_TYPE` is
-  COMMERCIAL (production refuses anything else).
+- `PLAID_CONSENT_TYPE` is set explicitly for the environment (SWEEPING today).
 
 ### Double-collection defences (verified 2026-07-30)
 

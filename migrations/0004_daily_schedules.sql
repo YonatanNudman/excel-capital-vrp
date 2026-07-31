@@ -1,0 +1,22 @@
+-- Support a "daily" repayment frequency restricted to chosen weekdays, so a
+-- lender can collect on working days only.
+--
+-- Deliberately a single ADD COLUMN, with no table rebuild.
+--
+-- A rebuild was attempted first, to widen the frequency CHECK constraint so it
+-- would accept a literal 'daily'. It cannot be done safely here:
+--   * Renaming repayment_schedules makes SQLite rewrite the foreign key clauses
+--     in payments and payment_intents to follow the rename, so dropping the
+--     temporary table leaves the ledger referencing a table that is gone.
+--   * Building a replacement and dropping the original instead fails because
+--     payments rows reference it, and D1 does not honour defer_foreign_keys for
+--     migrations: it detects the violated constraint and rolls the whole
+--     database back (verified against staging on 2026-07-31).
+--
+-- Rebuilding the payment ledger to change a schedule constraint is not a trade
+-- worth making, so the CHECK is left alone and a daily schedule is stored as
+-- 'custom' with interval_days = 1 plus an explicit days_of_week list. The
+-- mapping lives in src/lib/repo/schedules.ts and is covered by tests; the domain
+-- code still treats "daily" as a first-class frequency.
+
+ALTER TABLE repayment_schedules ADD COLUMN days_of_week TEXT;

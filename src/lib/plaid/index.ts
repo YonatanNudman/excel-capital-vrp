@@ -3,6 +3,9 @@ import { MockPlaidClient } from "./mock";
 import { RealPlaidClient } from "./real";
 
 export * from "./types";
+
+/** Consent types Plaid accepts. Which one applies is Plaid's call per account. */
+const VALID_CONSENT_TYPES = ["SWEEPING", "COMMERCIAL"];
 export { PlaidApiError, PlaidTransportError } from "./real";
 
 /**
@@ -18,13 +21,25 @@ export function getPlaidClient(env: {
   PLAID_CONSENT_TYPE?: string;
 }): PlaidClient {
   if (env.PLAID_CLIENT_ID && env.PLAID_SECRET) {
-    const consentType = env.PLAID_CONSENT_TYPE?.toUpperCase() || "COMMERCIAL";
-    // SWEEPING consents only cover moving money between one person's own
-    // accounts. Collecting a borrower's repayment under a sweeping consent
-    // would be the wrong authorisation entirely, so refuse it in production.
-    if (consentType !== "COMMERCIAL" && env.APP_ENV === "production") {
+    // Plaid confirmed on 2026-07-31 that this account is provisioned for
+    // SWEEPING and that sweeping is the consent type they consider correct for
+    // collecting scheduled loan repayments. COMMERCIAL returns
+    // UNAUTHORIZED_ROUTE_ACCESS on this account.
+    //
+    // The guard is therefore not "which type", which is Plaid's call, but
+    // "state it deliberately": an unknown value is always refused, and
+    // production must set it explicitly rather than inherit a default, so
+    // nobody goes live on a guess.
+    const raw = env.PLAID_CONSENT_TYPE?.trim().toUpperCase();
+    if (env.APP_ENV === "production" && !raw) {
       throw new Error(
-        `PLAID_CONSENT_TYPE must be COMMERCIAL in production (got ${consentType})`,
+        "PLAID_CONSENT_TYPE must be set explicitly in production (SWEEPING or COMMERCIAL)",
+      );
+    }
+    const consentType = raw || "SWEEPING";
+    if (!VALID_CONSENT_TYPES.includes(consentType)) {
+      throw new Error(
+        `PLAID_CONSENT_TYPE must be one of ${VALID_CONSENT_TYPES.join(", ")} (got ${consentType})`,
       );
     }
     return new RealPlaidClient({

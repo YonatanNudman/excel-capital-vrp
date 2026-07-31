@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { createBorrowerAction } from "@/lib/actions/borrowers";
 
+import { WeekdayPicker } from "@/components/weekday-picker";
+
 export const dynamic = "force-dynamic";
 
 function Field({
@@ -88,12 +90,16 @@ export default function NewBorrowerPage() {
               name="frequency"
               className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm"
             >
+              <option value="daily">Daily (choose which days below)</option>
               <option value="weekly">Weekly</option>
               <option value="fortnightly">Fortnightly</option>
               <option value="monthly">Monthly</option>
               <option value="custom">Custom (every N days)</option>
             </select>
           </label>
+          <div className="col-span-2">
+            <WeekdayPicker selected={null} />
+          </div>
           <Field label="Interval days (custom only)" name="intervalDays" type="number" />
           <Field label="Start date" name="startDate" type="date" />
           <label className="block">

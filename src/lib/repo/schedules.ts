@@ -1,12 +1,18 @@
 import type { EndMode, Frequency, RepaymentSchedule } from "@/lib/types";
 import { newId } from "@/lib/ids";
-import { nextRunDate, type ScheduleSpec } from "@/lib/schedule";
+import {
+  nextRunDate,
+  type ScheduleSpec,
+  type Frequency as ScheduleFrequency,
+} from "@/lib/schedule";
 
 export interface ScheduleInput {
   amountMinor: number;
   currency?: string;
-  frequency: Frequency;
+  /** Domain frequency, which may be "daily". Encoded for storage on write. */
+  frequency: ScheduleFrequency;
   intervalDays?: number | null;
+  daysOfWeek?: number[] | null;
   startDate: string;
   endMode: EndMode;
   endDate?: string | null;
@@ -14,12 +20,70 @@ export interface ScheduleInput {
   endTotalMinor?: number | null;
 }
 
+const ALL_DAYS = [1, 2, 3, 4, 5, 6, 7];
+
+/**
+ * Storage encoding for "daily".
+ *
+ * The frequency CHECK constraint predates the daily option and cannot be widened
+ * without rebuilding a table the payment ledger references (see
+ * migrations/0004). So a daily schedule is stored as 'custom' with
+ * interval_days = 1 and an ALWAYS-PRESENT days_of_week list (all seven when the
+ * operator ticks nothing). That list is what makes the row unambiguously daily
+ * on the way back out.
+ */
+function encodeFrequency(input: ScheduleInput): {
+  frequency: Frequency; // storable value only
+  intervalDays: number | null;
+  daysOfWeek: number[] | null;
+} {
+  if (input.frequency !== "daily") {
+    return {
+      frequency: input.frequency as Frequency,
+      intervalDays: input.intervalDays ?? null,
+      daysOfWeek: null,
+    };
+  }
+  return {
+    frequency: "custom",
+    intervalDays: 1,
+    daysOfWeek: input.daysOfWeek && input.daysOfWeek.length > 0 ? input.daysOfWeek : ALL_DAYS,
+  };
+}
+
+/** True when a stored row is one of the daily schedules encoded above. */
+export function isStoredDaily(s: {
+  frequency: Frequency;
+  interval_days: number | null;
+  days_of_week: string | null;
+}): boolean {
+  return s.frequency === "custom" && s.interval_days === 1 && !!s.days_of_week;
+}
+
+/** "1,2,3" as stored becomes [1,2,3]; blank or null becomes null (every day). */
+export function parseDaysOfWeek(stored: string | null | undefined): number[] | null {
+  if (!stored) return null;
+  const days = stored
+    .split(",")
+    .map((d) => Number(d.trim()))
+    .filter((d) => Number.isInteger(d) && d >= 1 && d <= 7);
+  return days.length > 0 ? [...new Set(days)].sort((a, b) => a - b) : null;
+}
+
+/** Stored canonically: sorted, de-duplicated, comma separated. */
+export function formatDaysOfWeek(days: number[] | null | undefined): string | null {
+  if (!days || days.length === 0) return null;
+  return [...new Set(days)].sort((a, b) => a - b).join(",");
+}
+
 export function toSpec(s: RepaymentSchedule | ScheduleInput): ScheduleSpec {
   if ("amount_minor" in s) {
+    const daily = isStoredDaily(s);
     return {
       amountMinor: s.amount_minor,
-      frequency: s.frequency,
-      intervalDays: s.interval_days,
+      frequency: daily ? "daily" : s.frequency,
+      intervalDays: daily ? null : s.interval_days,
+      daysOfWeek: parseDaysOfWeek(s.days_of_week),
       startDate: s.start_date,
       endMode: s.end_mode,
       endDate: s.end_date,
@@ -31,6 +95,7 @@ export function toSpec(s: RepaymentSchedule | ScheduleInput): ScheduleSpec {
     amountMinor: s.amountMinor,
     frequency: s.frequency,
     intervalDays: s.intervalDays ?? null,
+    daysOfWeek: s.daysOfWeek ?? null,
     startDate: s.startDate,
     endMode: s.endMode,
     endDate: s.endDate ?? null,
@@ -58,6 +123,7 @@ export async function upsertSchedule(
   input: ScheduleInput,
 ): Promise<RepaymentSchedule> {
   validateSchedule(input);
+  const encoded = encodeFrequency(input);
   const spec = toSpec(input);
   const firstRun = nextRunDate(spec, {
     afterDate: yesterday(input.startDate),
@@ -72,16 +138,18 @@ export async function upsertSchedule(
     db.prepare(
       `INSERT INTO repayment_schedules
         (id, borrower_id, amount_minor, currency, frequency, interval_days,
-         start_date, end_mode, end_date, end_count, end_total_minor, next_run_date, active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+         days_of_week, start_date, end_mode, end_date, end_count, end_total_minor,
+         next_run_date, active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
     )
     .bind(
       id,
       borrowerId,
       input.amountMinor,
       input.currency ?? "GBP",
-      input.frequency,
-      input.intervalDays ?? null,
+      encoded.frequency,
+      encoded.intervalDays,
+      formatDaysOfWeek(encoded.daysOfWeek),
       input.startDate,
       input.endMode,
       input.endDate ?? null,
@@ -107,6 +175,13 @@ function validateSchedule(input: ScheduleInput): void {
   if (input.frequency === "custom" &&
       (!Number.isInteger(input.intervalDays) || input.intervalDays! < 1 || input.intervalDays! > 3650)) {
     throw new Error("custom interval must be between 1 and 3650 days");
+  }
+  if (input.daysOfWeek) {
+    for (const d of input.daysOfWeek) {
+      if (!Number.isInteger(d) || d < 1 || d > 7) {
+        throw new Error("selected days must be between 1 (Monday) and 7 (Sunday)");
+      }
+    }
   }
   if (input.endMode === "date") {
     if (!input.endDate || !isDate(input.endDate) || input.endDate < input.startDate) {

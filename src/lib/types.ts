@@ -16,6 +16,13 @@ export type ConsentStatus =
   | "expired"
   | "rejected";
 
+/**
+ * Frequencies the DATABASE can hold. "daily" is deliberately absent: the
+ * frequency CHECK constraint cannot be widened safely (see migrations/0004), so
+ * a daily schedule is stored as 'custom' with interval_days = 1 plus an explicit
+ * days_of_week list. Use ScheduleFrequency from lib/schedule for the domain
+ * value, which does include "daily".
+ */
 export type Frequency = "weekly" | "fortnightly" | "monthly" | "custom";
 export type EndMode = "date" | "count" | "total";
 
@@ -86,6 +93,8 @@ export interface RepaymentSchedule {
   currency: string;
   frequency: Frequency;
   interval_days: number | null;
+  /** Comma-separated ISO weekdays for 'daily'; null/empty means every day. */
+  days_of_week: string | null;
   start_date: string;
   end_mode: EndMode;
   end_date: string | null;

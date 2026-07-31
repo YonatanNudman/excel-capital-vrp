@@ -2,9 +2,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb } from "@/lib/db";
 import { getBorrower } from "@/lib/repo/borrowers";
-import { getActiveSchedule } from "@/lib/repo/schedules";
+import { getActiveSchedule, parseDaysOfWeek } from "@/lib/repo/schedules";
 import { updateScheduleAction } from "@/lib/actions/borrowers";
 import { fromMinorUnits } from "@/lib/money";
+
+import { WeekdayPicker } from "@/components/weekday-picker";
 
 export const dynamic = "force-dynamic";
 
@@ -43,12 +45,14 @@ export default async function SchedulePage({
           <label className="block">
             <span className="text-sm font-medium text-slate-700">Frequency *</span>
             <select name="frequency" defaultValue={s?.frequency ?? "monthly"} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm">
+              <option value="daily">Daily (choose which days below)</option>
               <option value="weekly">Weekly</option>
               <option value="fortnightly">Fortnightly</option>
               <option value="monthly">Monthly</option>
               <option value="custom">Custom (every N days)</option>
             </select>
           </label>
+          <WeekdayPicker selected={parseDaysOfWeek(s?.days_of_week)} />
           <label className="block">
             <span className="text-sm font-medium text-slate-700">Interval days (custom)</span>
             <input name="intervalDays" type="number" defaultValue={s?.interval_days ?? ""} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" />
