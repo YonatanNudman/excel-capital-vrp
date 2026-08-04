@@ -3,6 +3,7 @@ import { getSettings } from "@/lib/repo/settings";
 import { getCurrentUser, hasRole } from "@/lib/auth";
 import { updateSettingsAction } from "@/lib/actions/settings";
 import { isPlaidConfigured } from "@/lib/plaid";
+import { getMailer, type MailerEnv } from "@/lib/mailer";
 import { getEnv } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -47,6 +48,9 @@ export default async function SettingsPage() {
   const isAdmin = user ? hasRole(user, "admin") : false;
   const plaidConnected = isPlaidConfigured(env);
   const realMoney = plaidConnected && env.PLAID_ENV === "production";
+  // The fallback mailer silently swallows everything, so say so plainly here
+  // rather than letting staff assume borrowers are being contacted.
+  const emailOn = getMailer(env as MailerEnv).mode !== "log";
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -75,6 +79,20 @@ export default async function SettingsPage() {
                 ? "This is a practice copy. It talks to the bank system in test mode, so nothing you do here touches anyone's real money."
                 : "This is a practice copy and it is not connected to the bank system yet. Payments are only pretend."}
           </p>
+          <div className="flex items-start justify-between gap-4 border-t border-slate-100 pt-3">
+            <span className="text-slate-600">Are borrowers getting emails?</span>
+            <span
+              className={`shrink-0 font-medium ${emailOn ? "text-emerald-700" : "text-amber-800"}`}
+            >
+              {emailOn ? "Yes" : "No, not set up yet"}
+            </span>
+          </div>
+          {!emailOn && (
+            <p className="text-xs text-amber-800">
+              Setup links, receipts and failed-payment notices are NOT being sent.
+              Send setup links to borrowers yourself for now.
+            </p>
+          )}
           <div className="flex items-start justify-between gap-4 border-t border-slate-100 pt-3">
             <span className="text-slate-600">Which copy is this?</span>
             <span className="shrink-0 font-medium capitalize">{env.APP_ENV}</span>

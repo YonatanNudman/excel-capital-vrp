@@ -83,8 +83,14 @@ export function SetupLinkButton({ borrowerId }: { borrowerId: string }) {
         <div className="mt-2 rounded-md bg-slate-50 p-2 text-xs">
           <div className="mb-1 text-slate-500">Share this single-use link (expires in 72h):</div>
           <code className="break-all text-slate-800">{state.url}</code>
-          {state.emailed && (
-            <div className="mt-1 text-slate-500">Emailed to borrower</div>
+          {state.emailed ? (
+            <div className="mt-1 text-slate-500">Emailed to the borrower</div>
+          ) : (
+            <div className="mt-1 font-medium text-amber-800">
+              {state.emailConfigured === false
+                ? "Not emailed: email sending is not set up yet. Copy this link and send it to the borrower yourself."
+                : "Not emailed. Copy this link and send it to the borrower yourself."}
+            </div>
           )}
         </div>
       )}

@@ -23,7 +23,16 @@ const SETUP_LINK_TTL_HOURS = 72;
  * token hash is stored; the full URL is returned once for staff to share, and
  * emailed to the borrower when a contact address is on file.
  */
-export type SetupLinkState = { url?: string; error?: string; emailed?: boolean } | null;
+export type SetupLinkState =
+  | {
+      url?: string;
+      error?: string;
+      /** True only when a real email was actually transmitted. */
+      emailed?: boolean;
+      /** False when no sending domain is configured, so staff must share it. */
+      emailConfigured?: boolean;
+    }
+  | null;
 
 export async function sendSetupLinkAction(
   _prev: SetupLinkState,
@@ -75,7 +84,12 @@ export async function sendSetupLinkAction(
 
   // Email the link to the borrower when we hold a contact address. Best-effort:
   // the link is always returned for staff to share even if delivery is off.
+  // NOTE: the fallback LogMailer reports ok:true so callers treat the flow as
+  // complete, so "did it send" must be judged on the mailer MODE, not on ok.
+  // Claiming an email was sent when none was is worse than sending none: staff
+  // stop chasing and the borrower waits for a link that never arrives.
   let emailed = false;
+  let emailConfigured = false;
   const borrower = await getBorrower(db, borrowerId);
   if (borrower?.contact_email) {
     const mailer = getMailer(env as MailerEnv);
@@ -85,7 +99,8 @@ export async function sendSetupLinkAction(
       expiresHours: SETUP_LINK_TTL_HOURS,
     });
     const result = await mailer.send({ to: borrower.contact_email, subject, text });
-    emailed = result.ok;
+    emailConfigured = mailer.mode !== "log";
+    emailed = result.ok && emailConfigured;
     await writeAudit(db, {
       actorStaffId: user.id,
       action: "email.setup_link",
@@ -96,5 +111,5 @@ export async function sendSetupLinkAction(
   }
 
   revalidatePath(`/borrowers/${borrowerId}`);
-  return { url, emailed };
+  return { url, emailed, emailConfigured };
 }
