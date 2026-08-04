@@ -167,11 +167,6 @@ export function CompanyLookup() {
     }
   }
 
-  function onChange(value: string) {
-    setQuery(value);
-    if (chosen) setChosen(null);
-  }
-
   if (unavailable) return null;
 
   const activeOption =
@@ -200,7 +195,10 @@ export function CompanyLookup() {
           aria-autocomplete="list"
           aria-activedescendant={activeOption}
           value={query}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => {
+            setChosen(null);
+            setQuery(e.target.value);
+          }}
           onKeyDown={onKeyDown}
           placeholder="e.g. Riverside Cafe, or 12345678"
           autoComplete="off"

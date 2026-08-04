@@ -197,3 +197,115 @@ export function RetryButton({ paymentId }: { paymentId: string }) {
     </span>
   );
 }
+
+/**
+ * Collect an amount outside the repayment schedule: a late fee, a missed
+ * payment being caught up, anything ad hoc.
+ *
+ * Kept separate from "Execute payment now" because the risk is different. That
+ * button collects a known scheduled amount; this one collects whatever is typed,
+ * so it asks for the figure and a short label the borrower will see on their
+ * statement, and confirms the exact amount before sending.
+ */
+export function OneOffPaymentButton({
+  borrowerId,
+  nonce,
+}: {
+  borrowerId: string;
+  nonce: string;
+}) {
+  const [openForm, setOpenForm] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [reason, setReason] = useState("");
+  const [state, formAction, pending] = useActionState<ActionState, FormData>(
+    executePaymentNowAction,
+    null,
+  );
+  const [dismissed, setDismissed] = useState(false);
+
+  // Same render-time adjustment as ExecuteNowButton: close the form once a
+  // result arrives so a sent payment never still looks like a pending question.
+  const [seenState, setSeenState] = useState(state);
+  if (state !== seenState) {
+    setSeenState(state);
+    setDismissed(false);
+    if (state?.tone === "success") {
+      setOpenForm(false);
+      setAmount("");
+      setReason("");
+    }
+  }
+
+  if (!openForm) {
+    return (
+      <div>
+        <button
+          type="button"
+          onClick={() => setOpenForm(true)}
+          className={`${btn} border border-slate-300 bg-white hover:bg-slate-50`}
+        >
+          Take a one-off payment
+        </button>
+        {state && !dismissed && (
+          <ResultBanner result={state} onDismiss={() => setDismissed(true)} />
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-full">
+      <form action={formAction} className="flex flex-wrap items-end gap-3">
+        <input type="hidden" name="borrowerId" value={borrowerId} />
+        <input type="hidden" name="nonce" value={nonce} />
+        <label className="block">
+          <span className="text-xs font-medium text-slate-700">Amount (£)</span>
+          <input
+            name="amount"
+            type="number"
+            step="0.01"
+            min="0.01"
+            required
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder="75.00"
+            className="mt-1 w-28 rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+          />
+        </label>
+        <label className="block">
+          <span className="text-xs font-medium text-slate-700">
+            What is it for?
+          </span>
+          <input
+            name="reason"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Late fee"
+            className="mt-1 w-40 rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+          />
+          <span className="mt-1 block text-xs text-slate-500">
+            Shows on their statement. Letters and numbers only.
+          </span>
+        </label>
+        <button
+          type="submit"
+          disabled={pending || !amount}
+          className={`${btn} bg-red-700 text-white hover:bg-red-600`}
+        >
+          {pending ? "Sending…" : `Collect £${amount || "0.00"} now`}
+        </button>
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => setOpenForm(false)}
+          className={`${btn} border border-slate-300 bg-white hover:bg-slate-50`}
+        >
+          Cancel
+        </button>
+      </form>
+      {state && !dismissed && (
+        <ResultBanner result={state} onDismiss={() => setDismissed(true)} />
+      )}
+    </div>
+  );
+}

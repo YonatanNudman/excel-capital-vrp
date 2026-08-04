@@ -12,6 +12,7 @@ import { setBorrowerStatusAction } from "@/lib/actions/borrowers";
 import { StatusBadge } from "@/components/status-badge";
 import {
   ExecuteNowButton,
+  OneOffPaymentButton,
   RetryButton,
   SetupLinkButton,
 } from "@/components/action-buttons";
@@ -132,6 +133,7 @@ export default async function BorrowerProfile({
             amountLabel={schedule ? formatMinor(schedule.amount_minor, schedule.currency) : "the entered amount"}
           />
           <SetupLinkButton borrowerId={borrower.id} />
+          <OneOffPaymentButton borrowerId={borrower.id} nonce={crypto.randomUUID()} />
           <form action={setBorrowerStatusAction}>
             <input type="hidden" name="borrowerId" value={borrower.id} />
             <input type="hidden" name="status" value={paused ? "active" : "paused"} />

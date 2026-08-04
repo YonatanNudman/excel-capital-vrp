@@ -179,6 +179,29 @@ This path must never be configured in production. There are three independent
 guards: the variables are absent from the production env, the code refuses when
 `APP_ENV=production`, and `tests/access.test.ts` asserts that refusal.
 
+## One-off payments (late fees, missed payments)
+
+"Take a one-off payment" on the borrower page collects an amount outside the
+schedule, with a short reason that becomes the statement reference so the
+borrower can tell it from a scheduled collection.
+
+IMPORTANT constraint to set expectations with staff: a one-off payment still
+cannot exceed the VRP limits the borrower authorised with their bank. That is the
+basis of VRP being safe for them, and it is enforced by the bank, not by us.
+`checkAmountAgainstConsent` refuses over-cap amounts locally first, quoting both
+figures, so the operator is not left staring at a provider rejection. For late
+fees to be collectable at all, the per-payment and periodic caps must be set with
+headroom ABOVE the normal schedule amount at onboarding.
+
+The periodic cap is deliberately not pre-checked: deciding what counts towards
+the current period needs the consent alignment and the provider's own view of
+settled payments. The bank enforces it and the failure lands on the payment.
+
+If the coordinated collection throws before an outcome is known (for example the
+Durable Object is unreachable), the operator is told we cannot confirm whether it
+was sent and explicitly warned not to send it again, rather than seeing a crash.
+Reconciliation resolves a payment that did go out.
+
 ## Companies House lookup
 
 Onboarding can search the register so a borrower's legal name and company number

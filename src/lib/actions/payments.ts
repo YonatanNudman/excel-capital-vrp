@@ -8,6 +8,8 @@ import { collectPaymentCoordinated } from "@/lib/durable/coordinated-collect";
 import { getActiveSchedule } from "@/lib/repo/schedules";
 import { toSpec } from "@/lib/repo/schedules";
 import { getSettings } from "@/lib/repo/settings";
+import { getActiveConsent } from "@/lib/repo/consents";
+import { checkAmountAgainstConsent } from "@/lib/payment-limits";
 import { getBorrower } from "@/lib/repo/borrowers";
 import {
   collectionProgress,
@@ -42,6 +44,29 @@ function outcomeMessage(o: CollectOutcome): ActionResult {
           "The bank has not confirmed this one yet. We are checking. Do not send it again.",
         tone: "info",
       };
+  }
+}
+
+/**
+ * Run a collection and never let an infrastructure failure become a page crash.
+ *
+ * By the time we get here a payment intent exists, so a thrown error means we do
+ * not know whether the provider was reached. The message therefore refuses to
+ * imply failure and explicitly warns against a blind retry: reconciliation will
+ * resolve a payment that did go out, and a second attempt could double-charge.
+ */
+async function collectOrReportUnknown(
+  run: () => Promise<CollectOutcome>,
+): Promise<ActionResult> {
+  try {
+    return outcomeMessage(await run());
+  } catch (error) {
+    console.error("collection failed before an outcome was known", error);
+    return {
+      message:
+        "We could not confirm whether this payment was sent. Check the Payments list before trying again, and do not send it a second time.",
+      tone: "info",
+    };
   }
 }
 
@@ -85,8 +110,20 @@ export async function executePaymentNowAction(
     return { message: "Today's payment was already sent. Nothing was charged twice.", tone: "info" };
   }
   let amountMinor: number | null = null;
-  if (typeof overrideAmount === "string" && overrideAmount.trim()) {
-    amountMinor = toMinorUnits(Number(overrideAmount));
+  const isOneOff = typeof overrideAmount === "string" && overrideAmount.trim().length > 0;
+  if (isOneOff) {
+    const entered = Number(overrideAmount);
+    if (!Number.isFinite(entered) || entered <= 0) {
+      return { message: "Enter an amount greater than zero.", tone: "error" };
+    }
+    amountMinor = toMinorUnits(entered);
+    // Tell the operator now if this breaches the mandate, rather than creating a
+    // payment the bank will refuse.
+    const problem = checkAmountAgainstConsent(
+      amountMinor,
+      await getActiveConsent(db, borrowerId),
+    );
+    if (problem) return { message: problem, tone: "error" };
   } else {
     if (schedule && isScheduledRun) {
       const progress = await collectionProgress(db, borrowerId, schedule.id);
@@ -106,10 +143,13 @@ export async function executePaymentNowAction(
   const idempotencyKey = isScheduledRun && schedule
     ? scheduledKey(borrowerId, schedule.id, schedule.next_run_date!)
     : manualKey(borrowerId, nonce);
-  const reference = buildUniqueReference(settings.default_reference_format, {
-    borrowerToken: await borrowerToken(db, borrowerId),
-    seq: paymentsMade + 1,
-  }, idempotencyKey);
+  const reason = String(fd.get("reason") ?? "").trim();
+  const reference = isOneOff && reason
+    ? uniqueReferenceFromBase(reason, idempotencyKey)
+    : buildUniqueReference(settings.default_reference_format, {
+        borrowerToken: await borrowerToken(db, borrowerId),
+        seq: paymentsMade + 1,
+      }, idempotencyKey);
   const intent = await createOrGetPaymentIntent(db, {
     id: nonce,
     borrowerId,
@@ -123,7 +163,8 @@ export async function executePaymentNowAction(
     expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
   });
 
-  const outcome = await collectPaymentCoordinated(env, {
+  const result = await collectOrReportUnknown(() =>
+    collectPaymentCoordinated(env, {
       borrowerId,
       amountMinor,
       reference,
@@ -132,11 +173,12 @@ export async function executePaymentNowAction(
       scheduledFor: isScheduledRun ? schedule?.next_run_date : null,
       intentId: intent.id,
       actorStaffId: user.id,
-    });
+    }),
+  );
 
   revalidatePath(`/borrowers/${borrowerId}`);
   revalidatePath("/payments");
-  return outcomeMessage(outcome);
+  return result;
 }
 
 /** Retry a failed payment as a distinct attempt (new idempotency key). */
@@ -195,7 +237,8 @@ export async function retryPaymentAction(
     createdBy: user.id,
     expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
   });
-  const outcome = await collectPaymentCoordinated(env, {
+  const result = await collectOrReportUnknown(() =>
+    collectPaymentCoordinated(env, {
       borrowerId: original.borrower_id,
       amountMinor: original.amount_minor,
       currency: original.currency,
@@ -205,9 +248,10 @@ export async function retryPaymentAction(
       intentId: intent.id,
       retryOf: rootId,
       actorStaffId: user.id,
-    });
+    }),
+  );
 
   revalidatePath(`/borrowers/${original.borrower_id}`);
   revalidatePath("/payments");
-  return outcomeMessage(outcome);
+  return result;
 }
