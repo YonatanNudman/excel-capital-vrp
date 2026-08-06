@@ -1,5 +1,7 @@
 import { getDb } from "@/lib/db";
 import { listStaff } from "@/lib/repo/staff";
+import { listPendingRequests } from "@/lib/repo/access-requests";
+import { AccessRequestQueue } from "@/components/access-request-queue";
 import { getCurrentUser, hasRole } from "@/lib/auth";
 import { StatusBadge } from "@/components/status-badge";
 import {
@@ -22,10 +24,17 @@ export default async function StaffPage() {
     );
   }
 
-  const staff = await listStaff(getDb());
+  const [staff, pendingRequests] = await Promise.all([
+    listStaff(getDb()),
+    listPendingRequests(getDb()),
+  ]);
 
   return (
     <div>
+      {pendingRequests.length > 0 && (
+        <AccessRequestQueue requests={pendingRequests} />
+      )}
+
       <div className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">Staff</h1>
         <p className="mt-1 text-sm text-slate-500">

@@ -82,11 +82,9 @@
 				// collecting scheduled loan repayments. COMMERCIAL returns
 				// UNAUTHORIZED_ROUTE_ACCESS here.
 				"PLAID_CONSENT_TYPE": "SWEEPING",
-				// Excel Capital testers sign themselves in with any address at this
-				// domain and are provisioned as OPERATOR (never admin). Staging only:
-				// src/lib/auth.ts refuses domain provisioning when APP_ENV=production,
-				// where staff must be added deliberately.
-				"STAFF_AUTO_PROVISION_DOMAIN": "excelcapital.co.uk",
+				// Domain auto-provisioning is OFF: every new person now goes through the
+				// approve/deny queue on /staff instead of being granted access silently.
+				// Set STAFF_AUTO_PROVISION_DOMAIN again only to bypass that queue.
 				// Testers onboard invented companies, so verification informs but does
 				// not block here. Production requires a real, active company.
 				"COMPANIES_HOUSE_ENFORCE": "false"

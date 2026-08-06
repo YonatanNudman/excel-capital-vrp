@@ -111,3 +111,28 @@ export function reconsentEmail(params: {
     ].join("\n"),
   };
 }
+
+/**
+ * Tell the admins somebody is asking for access. Internal, so it names the
+ * requester plainly and links straight to where the decision is made.
+ */
+export function accessRequestEmail(params: {
+  requesterEmail: string;
+  note: string | null;
+  reviewUrl: string;
+}): EmailContent {
+  const { requesterEmail, note, reviewUrl } = params;
+  return {
+    subject: `Access request: ${requesterEmail}`,
+    text: [
+      `${requesterEmail} has asked for access to the Excel Capital platform.`,
+      "",
+      note ? `They said: ${note}` : "They did not leave a note.",
+      "",
+      "Approve or deny them here:",
+      reviewUrl,
+      "",
+      "They cannot see anything until you approve, and denying them stops them asking again.",
+    ].join("\n"),
+  };
+}

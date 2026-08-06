@@ -14,6 +14,10 @@ const ACTIONS_DIR = path.join(__dirname, "..", "src", "lib", "actions");
 const PUBLIC_ACTIONS: Record<string, string> = {
   completeSetupAction:
     "borrower-facing; authenticated by the single-use setup token, not by staff role",
+  requestAccessAction:
+    "must be callable by someone Cloudflare has authenticated who is NOT yet staff, " +
+    "so requireRole would defeat its purpose. It still takes the email from the " +
+    "verified Access token and never from the form, and it grants nothing.",
 };
 
 function actionFiles(): string[] {

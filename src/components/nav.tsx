@@ -11,7 +11,14 @@ const LINKS = [
   { href: "/settings", label: "Settings", adminOnly: true },
 ];
 
-export function Nav({ role }: { role: "admin" | "operator" | "viewer" }) {
+export function Nav({
+  role,
+  pendingRequests = 0,
+}: {
+  role: "admin" | "operator" | "viewer";
+  /** Shown as a badge on Staff so waiting people are noticed without an email. */
+  pendingRequests?: number;
+}) {
   const pathname = usePathname();
   return (
     <nav className="flex items-center gap-1">
@@ -28,6 +35,14 @@ export function Nav({ role }: { role: "admin" | "operator" | "viewer" }) {
             }`}
           >
             {l.label}
+            {l.href === "/staff" && pendingRequests > 0 && (
+              <span
+                aria-label={`${pendingRequests} waiting for access`}
+                className="ml-1.5 rounded-full bg-amber-500 px-1.5 py-0.5 text-xs font-semibold text-white"
+              >
+                {pendingRequests}
+              </span>
+            )}
           </Link>
         );
       })}

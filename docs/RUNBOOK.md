@@ -137,6 +137,35 @@ For a custom production hostname later: add a zone, attach a Custom Domain to
 the Worker, create a matching Access app, and disable the public workers.dev
 route.
 
+## Access requests (approve / deny)
+
+Anyone Cloudflare authenticates who is NOT staff sees an "Ask for access" screen
+instead of a dead end. They can leave a note. An admin approves (choosing the
+role) or denies them on `/staff`, where a pending count also appears as a badge
+on the Staff tab.
+
+Design decisions worth keeping:
+- The requester's email comes from the verified Access token, never the form, so
+  nobody can request on behalf of an address they do not control.
+- One row per email, and a DENIED row is kept deliberately: it is what stops the
+  same address asking again.
+- Approval requires an explicit role. `decideRequest` throws rather than
+  defaulting someone's permissions.
+- The decision UPDATE is guarded on `status = 'pending'`, so two admins clicking
+  at once cannot both grant access; the second is told it was already decided.
+- Domain auto-provisioning is now OFF (`STAFF_AUTO_PROVISION_DOMAIN` removed), so
+  nobody is granted access silently. `STAFF_BOOTSTRAP_ADMINS` still admits the
+  named owner, which is the way back in if the queue is ever mishandled.
+- Notification email goes to STAFF_BOOTSTRAP_ADMINS and silently no-ops until
+  RESEND_API_KEY and EMAIL_FROM are set, which is why the in-app badge exists.
+
+SECURITY NOTE. Per the owner's decision, the Cloudflare Access policy is to be
+opened to any verified email so that outsiders can request access. That makes the
+login page reachable by anyone on the internet. An unapproved visitor sees only
+the request screen: no data, no navigation. The tradeoff accepted is that any
+future authorisation bug becomes internet-reachable rather than reachable only by
+staff. Reverting is a one-line Access policy change back to the domain rule.
+
 ## Tester access to staging (Excel Capital)
 
 Cloudflare Access allows any address at `excelcapital.co.uk`, plus the named
