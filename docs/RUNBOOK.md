@@ -159,12 +159,30 @@ Design decisions worth keeping:
 - Notification email goes to STAFF_BOOTSTRAP_ADMINS and silently no-ops until
   RESEND_API_KEY and EMAIL_FROM are set, which is why the in-app badge exists.
 
-SECURITY NOTE. Per the owner's decision, the Cloudflare Access policy is to be
-opened to any verified email so that outsiders can request access. That makes the
-login page reachable by anyone on the internet. An unapproved visitor sees only
-the request screen: no data, no navigation. The tradeoff accepted is that any
-future authorisation bug becomes internet-reachable rather than reachable only by
-staff. Reverting is a one-line Access policy change back to the domain rule.
+ACCESS POLICY: OPEN (changed 2026-08-06, owner's decision). The staging Access
+policy is now `{"everyone": {}}` with decision allow, so anyone who completes the
+one-time PIN reaches the app. The app is the real gate: an unapproved visitor gets
+the request screen only, with no data and no navigation. Verified after the change
+that /borrowers, /staff and /api/payments/export all still require sign-in.
+
+The tradeoff accepted: any future authorisation bug is now internet-reachable
+rather than reachable only by staff. To revert, set the policy include back to
+`[{"email_domain": {"domain": "excelcapital.co.uk"}}]` on Access app
+3c37a2bb-fd31-4008-9b1a-03239d2878a2, policy a32ef67a-7b7d-452a-84f0-c6bb4f5b4108.
+
+EMAIL WITHOUT A DOMAIN. Resend's `onboarding@resend.dev` sender needs no domain
+verification but can only deliver to the address that owns the Resend account.
+So with EMAIL_FROM set to it:
+  - Access-request notifications to the owner DO arrive, provided the address in
+    STAFF_BOOTSTRAP_ADMINS is the Resend account email.
+  - Every borrower email (setup links, receipts, failure notices) gets a 403.
+    ResendMailer returns { ok: false } rather than throwing, so the flow is
+    unaffected and the UI correctly says "Not emailed", with the provider error
+    recorded in the audit log.
+Borrower email therefore still needs a verified domain, and it should be Excel
+Capital's own (or a subdomain such as mail.excelcapital.co.uk), since borrowers
+should receive mail from the lender rather than from a third party. That requires
+DNS records added by whoever controls that domain.
 
 ## Tester access to staging (Excel Capital)
 
