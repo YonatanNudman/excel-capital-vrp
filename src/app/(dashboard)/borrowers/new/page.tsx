@@ -3,6 +3,7 @@ import { createBorrowerAction } from "@/lib/actions/borrowers";
 
 import { WeekdayPicker } from "@/components/weekday-picker";
 import { CompanyLookup } from "@/components/company-lookup";
+import { CeilingSuggester } from "@/components/ceiling-suggester";
 import { isCompaniesHouseConfigured } from "@/lib/companies-house";
 import { getEnv } from "@/lib/db";
 
@@ -126,6 +127,7 @@ export default function NewBorrowerPage() {
         </Section>
 
         <Section title="VRP consent limits">
+          <CeilingSuggester />
           <Field label="Ceiling for any single payment (£)" name="maxPaymentAmount" type="number" placeholder="600.00" />
           <label className="block">
             <span className="text-sm font-medium text-slate-700">The period is</span>

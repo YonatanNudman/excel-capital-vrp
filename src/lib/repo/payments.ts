@@ -249,14 +249,41 @@ export async function listPaymentsForBorrower(
 
 export async function listPayments(
   db: D1Database,
-  opts: { status?: PaymentStatus | "all"; limit?: number } = {},
+  opts: {
+    status?: PaymentStatus | "all";
+    /** "problem" groups the statuses an operator actually chases. */
+    group?: "problem" | null;
+    borrowerId?: string | null;
+    from?: string | null;
+    to?: string | null;
+    limit?: number;
+  } = {},
 ): Promise<Payment[]> {
   let sql = "SELECT * FROM payments";
   const binds: unknown[] = [];
+  const where: string[] = [];
   if (opts.status && opts.status !== "all") {
-    sql += " WHERE status = ?";
+    where.push("status = ?");
     binds.push(opts.status);
   }
+  if (opts.group === "problem") {
+    where.push("status IN ('failed','rejected','unknown')");
+  }
+  if (opts.borrowerId) {
+    where.push("borrower_id = ?");
+    binds.push(opts.borrowerId);
+  }
+  // Dates are stored as ISO strings, so a lexicographic compare on the first ten
+  // characters is a correct date comparison.
+  if (opts.from) {
+    where.push("substr(created_at, 1, 10) >= ?");
+    binds.push(opts.from);
+  }
+  if (opts.to) {
+    where.push("substr(created_at, 1, 10) <= ?");
+    binds.push(opts.to);
+  }
+  if (where.length > 0) sql += " WHERE " + where.join(" AND ");
   sql += " ORDER BY created_at DESC LIMIT ?";
   binds.push(Math.min(opts.limit ?? 200, 500));
   const { results } = await db

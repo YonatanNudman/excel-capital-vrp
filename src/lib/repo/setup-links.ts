@@ -57,3 +57,21 @@ export async function invalidateBorrowerLinks(
     .bind(new Date().toISOString(), borrowerId)
     .run();
 }
+
+/**
+ * The most recent link issued to a borrower, whatever its state.
+ *
+ * Staff need to tell "they are ignoring me" from "the link expired", and neither
+ * is visible if only live links can be looked up.
+ */
+export async function latestSetupLinkForBorrower(
+  db: D1Database,
+  borrowerId: string,
+): Promise<SetupLink | null> {
+  return db
+    .prepare(
+      "SELECT * FROM setup_links WHERE borrower_id = ? ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(borrowerId)
+    .first<SetupLink>();
+}

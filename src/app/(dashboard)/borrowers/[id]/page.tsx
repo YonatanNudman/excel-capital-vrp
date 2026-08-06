@@ -6,7 +6,8 @@ import { getBorrower } from "@/lib/repo/borrowers";
 import { getActiveConsent } from "@/lib/repo/consents";
 import { getActiveSchedule, isStoredDaily, parseDaysOfWeek } from "@/lib/repo/schedules";
 import { getRecipient } from "@/lib/repo/recipients";
-import { listPaymentsForBorrower } from "@/lib/repo/payments";
+import { listPaymentsForBorrower, collectionProgress } from "@/lib/repo/payments";
+import { latestSetupLinkForBorrower } from "@/lib/repo/setup-links";
 import { getCurrentUser, hasRole } from "@/lib/auth";
 import { setBorrowerStatusAction } from "@/lib/actions/borrowers";
 import { StatusBadge } from "@/components/status-badge";
@@ -18,6 +19,9 @@ import {
 } from "@/components/action-buttons";
 import { formatMinor } from "@/lib/money";
 import { setupReadiness } from "@/lib/readiness";
+import { loanProgress, paymentKind } from "@/lib/loan-progress";
+import { BorrowerSummary } from "@/components/borrower-summary";
+import { PaymentKindTag } from "@/components/payment-kind-tag";
 import type { RepaymentSchedule } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -76,13 +80,18 @@ export default async function BorrowerProfile({
   const borrower = await getBorrower(db, id);
   if (!borrower) notFound();
 
-  const [consent, schedule, recipient, payments, user] = await Promise.all([
+  const [consent, schedule, recipient, payments, user, latestLink] = await Promise.all([
     getActiveConsent(db, id),
     getActiveSchedule(db, id),
     getRecipient(db, id),
     listPaymentsForBorrower(db, id, 50),
     getCurrentUser(),
+    latestSetupLinkForBorrower(db, id),
   ]);
+  const progress = loanProgress({
+    schedule,
+    ...(await collectionProgress(db, id, schedule?.id)),
+  });
   const canOperate = user ? hasRole(user, "operator") : false;
   const paused = borrower.status === "paused";
   // Surface an incomplete setup here rather than letting the borrower hit it.
@@ -102,6 +111,13 @@ export default async function BorrowerProfile({
           <StatusBadge status={borrower.status} />
         </div>
       </div>
+
+      <BorrowerSummary
+        schedule={schedule}
+        progress={progress}
+        latestLink={latestLink}
+        consentAuthorised={consent?.status === "authorized"}
+      />
 
       {canOperate && !readiness.ready && (
         <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4">
@@ -221,6 +237,7 @@ export default async function BorrowerProfile({
                 <tr>
                   <th className="py-2 font-medium">Date</th>
                   <th className="py-2 font-medium">Amount</th>
+                  <th className="py-2 font-medium">What for</th>
                   <th className="py-2 font-medium">Reference</th>
                   <th className="py-2 font-medium">Status</th>
                   <th className="py-2 font-medium"></th>
@@ -229,7 +246,7 @@ export default async function BorrowerProfile({
               <tbody className="divide-y divide-slate-100">
                 {payments.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="py-6 text-center text-slate-400">
+                    <td colSpan={6} className="py-6 text-center text-slate-400">
                       No payments yet.
                     </td>
                   </tr>
@@ -238,6 +255,7 @@ export default async function BorrowerProfile({
                   <tr key={p.id}>
                     <td className="py-2 text-slate-600">{p.created_at.slice(0, 10)}</td>
                     <td className="py-2 font-medium">{formatMinor(p.amount_minor, p.currency)}</td>
+                    <td className="py-2"><PaymentKindTag kind={paymentKind(p)} /></td>
                     <td className="py-2 text-slate-600">{p.reference ?? "-"}</td>
                     <td className="py-2">
                       <StatusBadge status={p.status} />
