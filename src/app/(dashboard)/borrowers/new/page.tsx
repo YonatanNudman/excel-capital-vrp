@@ -126,9 +126,9 @@ export default function NewBorrowerPage() {
         </Section>
 
         <Section title="VRP consent limits">
-          <Field label="Max per payment (£)" name="maxPaymentAmount" type="number" />
+          <Field label="Ceiling for any single payment (£)" name="maxPaymentAmount" type="number" placeholder="600.00" />
           <label className="block">
-            <span className="text-sm font-medium text-slate-700">Periodic window</span>
+            <span className="text-sm font-medium text-slate-700">The period is</span>
             <select
               name="consentPeriod"
               className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm"
@@ -137,9 +137,10 @@ export default function NewBorrowerPage() {
               <option value="DAY">Day</option>
               <option value="WEEK">Week</option>
               <option value="MONTH">Month</option>
+              <option value="YEAR">Year</option>
             </select>
           </label>
-          <Field label="Max per period (£)" name="periodicMaxAmount" type="number" />
+          <Field label="Ceiling across the whole period (£)" name="periodicMaxAmount" type="number" placeholder="2400.00" />
           <label className="block">
             <span className="text-sm font-medium text-slate-700">Alignment</span>
             <select

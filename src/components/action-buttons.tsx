@@ -67,6 +67,7 @@ export function SetupLinkButton({ borrowerId }: { borrowerId: string }) {
     sendSetupLinkAction,
     null,
   );
+  const [copied, setCopied] = useState(false);
   return (
     <div>
       <form action={formAction}>
@@ -81,7 +82,23 @@ export function SetupLinkButton({ borrowerId }: { borrowerId: string }) {
       </form>
       {state?.url && (
         <div className="mt-2 rounded-md bg-slate-50 p-2 text-xs">
-          <div className="mb-1 text-slate-500">Share this single-use link (expires in 72h):</div>
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <span className="text-slate-500">
+              Share this single-use link (expires in 72h):
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard
+                  .writeText(state.url!)
+                  .then(() => setCopied(true))
+                  .catch(() => setCopied(false));
+              }}
+              className="shrink-0 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium hover:bg-slate-100"
+            >
+              {copied ? "Copied" : "Copy link"}
+            </button>
+          </div>
           <code className="break-all text-slate-800">{state.url}</code>
           {state.emailed ? (
             <div className="mt-1 text-slate-500">Emailed to the borrower</div>

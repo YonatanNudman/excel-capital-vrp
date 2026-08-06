@@ -57,13 +57,20 @@ function allowedWeekdays(spec: ScheduleSpec): Set<number> | null {
   return new Set(raw);
 }
 
+/** Frequencies where a chosen weekday is meaningful. */
+const WEEKDAY_AWARE = new Set<Frequency>(["daily", "weekly", "fortnightly"]);
+
 /**
  * Move forward to the first date on or after `date` that falls on an allowed
  * weekday. Used so a start date on an excluded day does not produce a run.
+ *
+ * For weekly and fortnightly this is what lets an operator say "collect on
+ * Tuesdays" rather than having the weekday be an accident of the start date.
+ * Monthly is left alone, where a weekday has no meaning.
  */
 export function firstAllowedDate(date: string, spec: ScheduleSpec): string {
   const allowed = allowedWeekdays(spec);
-  if (spec.frequency !== "daily" || !allowed) return date;
+  if (!WEEKDAY_AWARE.has(spec.frequency) || !allowed) return date;
   const d = parseUTC(date);
   for (let i = 0; i < 7; i++) {
     if (allowed.has(isoWeekday(d))) return formatUTC(d);

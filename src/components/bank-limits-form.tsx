@@ -101,11 +101,17 @@ export function BankLimitsForm({
           The borrower approves these with their bank. You can never take more
           than this, which is what makes it safe for them to agree.
         </p>
+        <p className="mt-1 rounded-md bg-amber-50 p-2 text-xs text-amber-900">
+          These are CEILINGS, not the repayment amount. Set them ABOVE the normal
+          repayment so you have room for a late fee or a missed payment later. If
+          the repayment is £500 and the ceiling is also £500, a late fee can never
+          be collected and their bank will refuse it.
+        </p>
       </div>
       <div className="grid grid-cols-2 gap-4">
         <label className="block">
           <span className="text-sm font-medium text-slate-700">
-            Most in one payment
+            Ceiling for any single payment
           </span>
           <input
             name="maxPaymentAmount"
@@ -115,10 +121,14 @@ export function BankLimitsForm({
             defaultValue={shown.maxPaymentAmount}
             className={input}
           />
-          <span className="mt-1 block text-xs text-slate-500">In pounds.</span>
+          <span className="mt-1 block text-xs text-slate-500">
+            In pounds. Higher than the repayment, e.g. repayment plus 20%.
+          </span>
         </label>
         <label className="block">
-          <span className="text-sm font-medium text-slate-700">Most per period</span>
+          <span className="text-sm font-medium text-slate-700">
+            Ceiling across the whole period
+          </span>
           <input
             name="periodicMaxAmount"
             type="number"
