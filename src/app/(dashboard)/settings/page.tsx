@@ -3,7 +3,8 @@ import { getSettings } from "@/lib/repo/settings";
 import { getCurrentUser, hasRole } from "@/lib/auth";
 import { updateSettingsAction } from "@/lib/actions/settings";
 import { isPlaidConfigured } from "@/lib/plaid";
-import { getMailer, type MailerEnv } from "@/lib/mailer";
+import { type MailerEnv } from "@/lib/mailer";
+import { emailReach } from "@/lib/mailer/reach";
 import { getEnv } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -50,7 +51,7 @@ export default async function SettingsPage() {
   const realMoney = plaidConnected && env.PLAID_ENV === "production";
   // The fallback mailer silently swallows everything, so say so plainly here
   // rather than letting staff assume borrowers are being contacted.
-  const emailOn = getMailer(env as MailerEnv).mode !== "log";
+  const reach = emailReach(env as MailerEnv);
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -82,15 +83,26 @@ export default async function SettingsPage() {
           <div className="flex items-start justify-between gap-4 border-t border-slate-100 pt-3">
             <span className="text-slate-600">Are borrowers getting emails?</span>
             <span
-              className={`shrink-0 font-medium ${emailOn ? "text-emerald-700" : "text-amber-800"}`}
+              className={`shrink-0 font-medium ${reach === "live" ? "text-emerald-700" : "text-amber-800"}`}
             >
-              {emailOn ? "Yes" : "No, not set up yet"}
+              {reach === "live"
+                ? "Yes"
+                : reach === "owner-only"
+                  ? "Not yet, only staff notices"
+                  : "No, not set up yet"}
             </span>
           </div>
-          {!emailOn && (
+          {reach === "off" && (
             <p className="text-xs text-amber-800">
               Setup links, receipts and failed-payment notices are NOT being sent.
               Send setup links to borrowers yourself for now.
+            </p>
+          )}
+          {reach === "owner-only" && (
+            <p className="text-xs text-amber-800">
+              Emails to staff work, but borrowers get nothing yet: sending is
+              still using a test address. Borrower emails need Excel Capital&apos;s
+              own domain verified first. Keep sending setup links yourself.
             </p>
           )}
           <div className="flex items-start justify-between gap-4 border-t border-slate-100 pt-3">
