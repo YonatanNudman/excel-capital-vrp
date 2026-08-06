@@ -82,6 +82,10 @@
 				// collecting scheduled loan repayments. COMMERCIAL returns
 				// UNAUTHORIZED_ROUTE_ACCESS here.
 				"PLAID_CONSENT_TYPE": "SWEEPING",
+				// Where borrower replies land. Confirmed by the client 2026-08-06: this
+				// is xlcapital.co.uk, NOT excelcapital.co.uk. A reply-to needs no domain
+				// verification, so it works whatever the sending domain is.
+				"EMAIL_REPLY_TO": "accounting@xlcapital.co.uk",
 				// Domain auto-provisioning is OFF: every new person now goes through the
 				// approve/deny queue on /staff instead of being granted access silently.
 				// Set STAFF_AUTO_PROVISION_DOMAIN again only to bypass that queue.
@@ -119,6 +123,7 @@
 				"PLAID_CONSENT_TYPE": "SWEEPING",
 				// Every production borrower must be a real, active registered company.
 				"COMPANIES_HOUSE_ENFORCE": "true",
+				"EMAIL_REPLY_TO": "accounting@xlcapital.co.uk",
 				"STAFF_BOOTSTRAP_ADMINS": "yonatan@thepipelinegroup.io"
 			},
 			"images": { "binding": "IMAGES" },

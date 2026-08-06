@@ -14,6 +14,8 @@ export { ResendMailer } from "./resend";
 export interface MailerEnv {
   RESEND_API_KEY?: string;
   EMAIL_FROM?: string;
+  /** Where replies go. Optional; omitted from the send when unset. */
+  EMAIL_REPLY_TO?: string;
 }
 
 /**
@@ -24,7 +26,11 @@ export interface MailerEnv {
  */
 export function getMailer(env: MailerEnv): Mailer {
   if (env.RESEND_API_KEY && env.EMAIL_FROM) {
-    return new ResendMailer(env.RESEND_API_KEY, env.EMAIL_FROM);
+    return new ResendMailer(
+      env.RESEND_API_KEY,
+      env.EMAIL_FROM,
+      env.EMAIL_REPLY_TO?.trim() || undefined,
+    );
   }
   return new LogMailer();
 }

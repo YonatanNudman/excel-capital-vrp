@@ -1,5 +1,7 @@
-import { describe, it, expect } from "vitest";
+/* eslint-disable @typescript-eslint/no-unused-vars -- fetch stub needs the params for typing */
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { getMailer } from "@/lib/mailer";
+import { ResendMailer } from "@/lib/mailer/resend";
 import {
   setupLinkEmail,
   receiptEmail,
@@ -85,5 +87,48 @@ describe("getMailer", () => {
   it("returns a resend-mode mailer when both vars are set", () => {
     const mailer = getMailer({ RESEND_API_KEY: "re_123", EMAIL_FROM: "no-reply@excel.example" });
     expect(mailer.mode).toBe("resend");
+  });
+});
+
+describe("reply-to", () => {
+  function captureBody() {
+    const spy = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
+      new Response(JSON.stringify({ id: "1" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", spy);
+    return () => JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("sets reply_to so borrower replies reach a person, not a no-reply void", async () => {
+    const body = captureBody();
+    const mailer = new ResendMailer("re_x", "Excel <noreply@x.test>", "accounting@xlcapital.co.uk");
+    await mailer.send({ to: "borrower@test.invalid", subject: "s", text: "t" });
+    expect(body().reply_to).toBe("accounting@xlcapital.co.uk");
+  });
+
+  it("omits reply_to entirely when none is configured", async () => {
+    const body = captureBody();
+    const mailer = new ResendMailer("re_x", "Excel <noreply@x.test>");
+    await mailer.send({ to: "borrower@test.invalid", subject: "s", text: "t" });
+    expect(body().reply_to).toBeUndefined();
+  });
+
+  it("passes the reply-to through getMailer from the environment", async () => {
+    const body = captureBody();
+    const mailer = getMailer({
+      RESEND_API_KEY: "re_x",
+      EMAIL_FROM: "Excel <noreply@x.test>",
+      EMAIL_REPLY_TO: "accounting@xlcapital.co.uk",
+    });
+    await mailer.send({ to: "b@test.invalid", subject: "s", text: "t" });
+    expect(body().reply_to).toBe("accounting@xlcapital.co.uk");
   });
 });

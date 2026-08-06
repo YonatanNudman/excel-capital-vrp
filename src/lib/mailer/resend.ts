@@ -12,6 +12,12 @@ export class ResendMailer implements Mailer {
   constructor(
     private readonly apiKey: string,
     private readonly from: string,
+    /**
+     * Where borrower replies should land. Without it, a borrower answering a
+     * payment receipt writes into a no-reply void and nobody at the lender ever
+     * sees it.
+     */
+    private readonly replyTo?: string,
   ) {}
 
   async send(msg: EmailMessage): Promise<MailerResult> {
@@ -27,6 +33,7 @@ export class ResendMailer implements Mailer {
           to: msg.to,
           subject: msg.subject,
           text: msg.text,
+          ...(this.replyTo ? { reply_to: this.replyTo } : {}),
         }),
       });
 
