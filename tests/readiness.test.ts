@@ -9,6 +9,9 @@ const recipient = (over: Partial<Recipient> = {}): Recipient => ({
   name: "Excel Capital Group Ltd",
   account_number: "12345678",
   sort_code: "123456",
+  label: null,
+  is_default: 1,
+  archived_at: null,
   created_at: "",
   ...over,
 });

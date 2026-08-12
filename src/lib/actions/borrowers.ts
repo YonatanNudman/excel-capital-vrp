@@ -16,6 +16,7 @@ import {
 } from "@/lib/repo/borrowers";
 import { upsertRecipient } from "@/lib/repo/recipients";
 import { upsertSchedule } from "@/lib/repo/schedules";
+import { consentBelongsToBorrower } from "@/lib/repo/destinations";
 import { createPendingConsent } from "@/lib/repo/consents";
 import { toMinorUnits } from "@/lib/money";
 import type { BorrowerStatus, EndMode, Frequency } from "@/lib/types";
@@ -122,12 +123,14 @@ export async function createBorrowerAction(fd: FormData): Promise<void> {
     createdBy: user.id,
   });
 
+  let recipientId: string | null = null;
   if (recipientName) {
-    await upsertRecipient(db, borrower.id, {
+    const recipient = await upsertRecipient(db, borrower.id, {
       name: recipientName,
       accountNumber: await protectString(account?.replace(/\s/g, ""), env.APP_ENCRYPTION_KEY),
       sortCode: await protectString(sort?.replace(/\D/g, ""), env.APP_ENCRYPTION_KEY),
     });
+    recipientId = recipient.id;
   }
 
   const amountMinor = money(fd, "amount");
@@ -150,6 +153,9 @@ export async function createBorrowerAction(fd: FormData): Promise<void> {
 
   // Intended VRP consent limits (used when the Plaid consent is created at setup).
   await createPendingConsent(db, borrower.id, {
+    // Bound to the account created above, so this mandate's destination is
+    // recorded from the very first row rather than inferred later.
+    recipientId,
     currency: "GBP",
     maxPaymentAmountMinor: money(fd, "maxPaymentAmount"),
     period: str(fd, "consentPeriod"),
@@ -185,6 +191,15 @@ export async function updateScheduleAction(fd: FormData): Promise<void> {
     throw new Error("amount, frequency and start date are required");
   }
 
+  // Which account scheduled collections pay into. Untrusted form input, so prove
+  // it is this borrower's mandate before storing it: otherwise a schedule could
+  // be pointed at a stranger's account and would then collect there every week
+  // with nobody looking.
+  const requestedConsentId = str(fd, "destinationConsentId");
+  if (requestedConsentId && !(await consentBelongsToBorrower(db, borrowerId, requestedConsentId))) {
+    throw new Error("that account is not set up for this borrower");
+  }
+
   await upsertSchedule(db, borrowerId, {
     amountMinor,
     frequency,
@@ -195,6 +210,7 @@ export async function updateScheduleAction(fd: FormData): Promise<void> {
     endDate: str(fd, "endDate"),
     endCount: num(fd, "endCount"),
     endTotalMinor: money(fd, "endTotal"),
+    consentId: requestedConsentId,
   });
 
   await writeAudit(db, {

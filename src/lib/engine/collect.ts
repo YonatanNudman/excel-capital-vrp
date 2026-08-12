@@ -5,7 +5,7 @@ import { mapPlaidStatus } from "@/lib/payment-state";
 import { PlaidApiError, PlaidTransportError, type PlaidClient } from "@/lib/plaid";
 import { writeAudit } from "@/lib/repo/audit";
 import { getBorrower } from "@/lib/repo/borrowers";
-import { getActiveConsent } from "@/lib/repo/consents";
+import { resolveCollectionDestination } from "@/lib/repo/destinations";
 import {
   completePaymentIntent,
   setPaymentIntentExecuting,
@@ -33,6 +33,12 @@ export interface CollectInput {
   currency?: string;
   reference: string;
   idempotencyKey: string;
+  /**
+   * Which mandate to collect against, and therefore which bank account the money
+   * lands in. Untrusted: it originates from a form, and is re-checked against
+   * this borrower's own destinations below. Omit for the default account.
+   */
+  consentId?: string | null;
   scheduleId?: string | null;
   intentId?: string | null;
   scheduledFor?: string | null;
@@ -63,10 +69,21 @@ export async function collectPayment(
     return { kind: "skipped", reason: `consent ${borrower.status}` };
   }
 
-  const consent = await getActiveConsent(db, input.borrowerId);
-  if (!consent || consent.status !== "authorized" || !consent.plaid_consent_id) {
+  // Resolve the destination HERE rather than trusting the caller. input.consentId
+  // arrives from a form, so this is the check that stops one borrower's money
+  // being collected into another borrower's mandate. It also verifies the mandate
+  // is authorised and provisioned, replacing the old getActiveConsent guard.
+  const resolved = await resolveCollectionDestination(db, input.borrowerId, input.consentId);
+  if (!resolved.ok) return { kind: "skipped", reason: resolved.reason };
+  const consent = resolved.destination.consent;
+  // resolveDestination already guarantees both of these, but re-check rather than
+  // asserting: this is the last point before a real payment row is written, and a
+  // future change to the resolver must not be able to reach the provider without
+  // a mandate to execute against.
+  if (!consent || !consent.plaid_consent_id) {
     return { kind: "skipped", reason: "no authorised consent" };
   }
+
   const now = new Date();
   if (consent.valid_from && now < new Date(consent.valid_from)) {
     return { kind: "skipped", reason: "consent is not yet valid" };
