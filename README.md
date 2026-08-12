@@ -9,6 +9,9 @@ Cron Triggers · Plaid Payment Initiation.
 
 ## Docs
 - [Spec](docs/SPEC.md)
+- [Runbook](docs/RUNBOOK.md) — deploys, migrations, Access, Plaid, secrets
+- [Multiple payout destinations](docs/MULTIPLE-DESTINATIONS.md) — how one
+  borrower repays into more than one account, and why it cannot reroute money
 - [Implementation plan](docs/IMPLEMENTATION-PLAN.md)
 
 ## Safety

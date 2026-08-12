@@ -69,7 +69,22 @@ consent `scope` and webhook JWT verification).
 
 ## Database
 
-- Apply migrations: `npm run db:migrate:local` / `npm run db:migrate:remote`.
+- Apply migrations:
+  - local: `npm run db:migrate:local`
+  - staging: `npm run db:migrate:staging`
+  - production: `npm run db:migrate:prod` (go-live only)
+- `npm run db:migrate:remote` targets `excel-capital-vrp`, the DEVELOPMENT
+  database. It is NOT staging. Use the named scripts above.
+- ALWAYS take row counts before and after a remote migration:
+  `npm run db:counts:staging`. D1 rolls a migration back on an FK violation, so
+  without counts a rollback looks exactly like a success (this bit us on 0004).
+- Also confirm the FK clauses in `payments`/`payment_intents` are unchanged after
+  any migration that touches a referenced table:
+  `SELECT sql FROM sqlite_master WHERE name IN ('payments','payment_intents')`.
+- The shell's global `CLOUDFLARE_ACCOUNT_ID`/`CLOUDFLARE_API_TOKEN` are TPG's and
+  cannot see this project's databases. Symptom: `could not be found [code: 7404]`
+  or an empty `d1 list`. Export BOTH from `.dev.vars` first (the account id alone
+  silently picks the wrong account; the token alone fails auth).
 - D1 time-travel/backups: enable and confirm restore before go-live (the payment
   ledger must be recoverable).
 
