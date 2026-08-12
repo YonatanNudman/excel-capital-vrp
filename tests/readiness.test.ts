@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { setupReadiness } from "@/lib/readiness";
+import { setupReadiness, destinationsReadiness } from "@/lib/readiness";
 import type { Consent, Recipient } from "@/lib/types";
 
 const recipient = (over: Partial<Recipient> = {}): Recipient => ({
@@ -114,5 +114,87 @@ describe("setupReadiness: reports every problem at once", () => {
       expect(m).not.toMatch(/minor|_|null|undefined|Plaid/);
       expect(m.length).toBeGreaterThan(10);
     }
+  });
+});
+
+describe("destinationsReadiness: every account the borrower must approve", () => {
+  const dest = (
+    label: string,
+    r: Partial<Recipient> | null,
+    c: Partial<Consent> | null,
+  ) => ({
+    label,
+    recipient: r === null ? null : recipient(r),
+    consent: c === null ? null : consent(c),
+  });
+
+  /** Complete and unauthorised: ready to be sent to the borrower. */
+  const complete = (label: string, over: Partial<Recipient> = {}) =>
+    dest(label, over, { max_payment_amount_minor: 60_000, periodic_max_amount_minor: 300_000, period: "MONTH" });
+
+  it("is ready when the only account is complete", () => {
+    expect(destinationsReadiness([complete("Main")]).ready).toBe(true);
+  });
+
+  /**
+   * The bug this function exists to fix a second time. Provisioning walks every
+   * account in turn and throws on the first one missing bank details, so checking
+   * only one account moved the borrower's dead end later rather than removing it.
+   */
+  it("catches a second account missing bank details", () => {
+    const result = destinationsReadiness([
+      complete("Main"),
+      complete("Backup", { account_number: null }),
+    ]);
+    expect(result.ready).toBe(false);
+    expect(result.missing.join(" ")).toMatch(/account number/i);
+  });
+
+  it("names which account is incomplete when there is more than one", () => {
+    // "Add the sort code" is useless advice when two accounts could need it.
+    const result = destinationsReadiness([
+      complete("Main"),
+      complete("Backup", { sort_code: null }),
+    ]);
+    expect(result.missing.every((m) => m.startsWith("Backup: "))).toBe(true);
+  });
+
+  it("does not prefix anything for a single-account borrower", () => {
+    // Their experience must be identical to before multiple accounts existed.
+    const result = destinationsReadiness([complete("Main", { sort_code: null })]);
+    expect(result.missing).toEqual(["Add the sort code for where repayments are sent."]);
+  });
+
+  it("ignores an already-authorised account", () => {
+    // Its details are fixed at the bank and cannot be edited, so reporting them
+    // as missing would ask the operator to do something impossible.
+    const result = destinationsReadiness([
+      dest("Main", { account_number: null, sort_code: null }, { status: "authorized" }),
+      complete("Backup"),
+    ]);
+    expect(result.ready).toBe(true);
+  });
+
+  it("ignores a retired account", () => {
+    const result = destinationsReadiness([
+      complete("Main"),
+      dest("Old", { archived_at: "2026-08-01T00:00:00Z", account_number: null }, null),
+    ]);
+    expect(result.ready).toBe(true);
+  });
+
+  it("asks for a bank account when there are none", () => {
+    const result = destinationsReadiness([]);
+    expect(result.ready).toBe(false);
+    expect(result.missing.join(" ")).toMatch(/add the bank account/i);
+  });
+
+  it("reports every incomplete account, not just the first", () => {
+    const result = destinationsReadiness([
+      complete("Main", { account_number: null }),
+      complete("Backup", { sort_code: null }),
+    ]);
+    expect(result.missing.some((m) => m.startsWith("Main: "))).toBe(true);
+    expect(result.missing.some((m) => m.startsWith("Backup: "))).toBe(true);
   });
 });

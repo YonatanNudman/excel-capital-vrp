@@ -10,9 +10,9 @@ import {
   invalidateBorrowerLinks,
 } from "@/lib/repo/setup-links";
 import { getBorrower } from "@/lib/repo/borrowers";
-import { getRecipient } from "@/lib/repo/recipients";
-import { getActiveConsent } from "@/lib/repo/consents";
-import { setupReadiness } from "@/lib/readiness";
+import { listDestinations } from "@/lib/repo/destinations";
+import { destinationLabel } from "@/lib/destinations";
+import { destinationsReadiness } from "@/lib/readiness";
 import { getMailer, type MailerEnv } from "@/lib/mailer";
 import { setupLinkEmail } from "@/lib/mailer/templates";
 
@@ -49,11 +49,17 @@ export async function sendSetupLinkAction(
   // Refuse to hand out a link that cannot possibly work. Plaid needs the
   // destination account and both consent caps, and without this check the
   // borrower is the one who discovers the gap, seeing only a generic error.
-  const [recipient, consent] = await Promise.all([
-    getRecipient(db, borrowerId),
-    getActiveConsent(db, borrowerId),
-  ]);
-  const readiness = setupReadiness(recipient, consent);
+  // Checked across every account the borrower will be walked through, not just
+  // one: provisioning throws on the first account missing bank details, and the
+  // borrower would hit that wall part-way through the flow.
+  const destinations = await listDestinations(db, borrowerId);
+  const readiness = destinationsReadiness(
+    destinations.map((d) => ({
+      label: destinationLabel(d),
+      recipient: d.recipient,
+      consent: d.consent,
+    })),
+  );
   if (!readiness.ready) {
     return {
       error: `This borrower is not ready yet. ${readiness.missing.join(" ")}`,

@@ -5,7 +5,6 @@ import { unprotectString } from "@/lib/crypto";
 import { getBorrower } from "@/lib/repo/borrowers";
 import { getActiveConsent } from "@/lib/repo/consents";
 import { getActiveSchedule, isStoredDaily, parseDaysOfWeek } from "@/lib/repo/schedules";
-import { getRecipient } from "@/lib/repo/recipients";
 import { listPaymentsForBorrower, collectionProgress } from "@/lib/repo/payments";
 import { latestSetupLinkForBorrower } from "@/lib/repo/setup-links";
 import { getCurrentUser, hasRole } from "@/lib/auth";
@@ -18,7 +17,7 @@ import {
   SetupLinkButton,
 } from "@/components/action-buttons";
 import { formatMinor } from "@/lib/money";
-import { setupReadiness } from "@/lib/readiness";
+import { destinationsReadiness } from "@/lib/readiness";
 import { loanProgress, paymentKind } from "@/lib/loan-progress";
 import { listDestinations } from "@/lib/repo/destinations";
 import { blockedReason, combinedCeiling, destinationLabel } from "@/lib/destinations";
@@ -84,11 +83,10 @@ export default async function BorrowerProfile({
   const borrower = await getBorrower(db, id);
   if (!borrower) notFound();
 
-  const [consent, schedule, recipient, payments, user, latestLink, destinations] =
+  const [consent, schedule, payments, user, latestLink, destinations] =
     await Promise.all([
       getActiveConsent(db, id),
       getActiveSchedule(db, id),
-      getRecipient(db, id),
       listPaymentsForBorrower(db, id, 50),
       getCurrentUser(),
       latestSetupLinkForBorrower(db, id),
@@ -100,8 +98,11 @@ export default async function BorrowerProfile({
   });
   const canOperate = user ? hasRole(user, "operator") : false;
   const paused = borrower.status === "paused";
-  // Surface an incomplete setup here rather than letting the borrower hit it.
-  const readiness = setupReadiness(recipient, consent);
+  // Surface an incomplete setup here rather than letting the borrower hit it, for
+  // every account they will be asked to approve rather than only one.
+  const readiness = destinationsReadiness(
+    destinations.map((d) => ({ label: destinationLabel(d), recipient: d.recipient, consent: d.consent })),
+  );
   const env = getEnv();
   // Decrypt and mask every destination here, on the server. The panel and the
   // picker are client components, so they must never receive account numbers.
