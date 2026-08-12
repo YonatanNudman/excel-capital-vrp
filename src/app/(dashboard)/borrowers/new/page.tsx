@@ -84,7 +84,7 @@ export default function NewBorrowerPage() {
           <Field label="Contact phone" name="contactPhone" />
         </Section>
 
-        <Section title="Recipient (where repayments are sent)">
+        <Section title="Recipient">
           <Field label="Account name" name="recipientName" placeholder="Excel Capital Group Ltd" />
           <Field label="Account number" name="recipientAccount" placeholder="12345678" />
           <Field label="Sort code" name="recipientSort" placeholder="12-34-56" />
