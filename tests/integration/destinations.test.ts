@@ -9,7 +9,13 @@ import {
   setDefaultRecipient,
 } from "@/lib/repo/destinations";
 import { createBorrower } from "@/lib/repo/borrowers";
-import { createPendingConsent, getActiveConsent, setConsentStatus } from "@/lib/repo/consents";
+import {
+  allPendingConsentsForBorrower,
+  createPendingConsent,
+  getActiveConsent,
+  pendingConsentsForBorrower,
+  setConsentStatus,
+} from "@/lib/repo/consents";
 
 let n = 0;
 const borrower = () => createBorrower(env.DB, { legalName: `Dest ${n++} Ltd`, createdBy: null });
@@ -241,6 +247,54 @@ describe("archiveRecipient", () => {
     const foreign = await seedLive(theirs.id, "Theirs");
     const result = await archiveRecipient(env.DB, mine.id, foreign.recipient.id);
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("pending mandates on a retired account", () => {
+  /**
+   * An operator can retire an account while the borrower is part-way through
+   * approving it. The borrower's bank may already hold a live mandate for it, so
+   * confirmation must still look at it: a mandate we stopped tracking is worse
+   * than an untidy list. Meanwhile the borrower must not be told they still have
+   * work to do on an account nobody wants any more.
+   */
+  async function seedRetiredPending() {
+    const b = await borrower();
+    await seedLive(b.id, "Main"); // default, so the spare can be retired
+    const spare = await addRecipient(env.DB, b.id, { name: "Spare", label: "Spare" });
+    const consent = await createPendingConsent(env.DB, b.id, {
+      recipientId: spare.id,
+      maxPaymentAmountMinor: 10_000,
+      periodicMaxAmountMinor: 50_000,
+      period: "MONTH",
+    });
+    await archiveRecipient(env.DB, b.id, spare.id);
+    return { borrowerId: b.id, consentId: consent.id };
+  }
+
+  it("is still confirmed, so a live bank mandate is never lost", async () => {
+    const { borrowerId, consentId } = await seedRetiredPending();
+    const all = await allPendingConsentsForBorrower(env.DB, borrowerId);
+    expect(all.map((c) => c.id)).toContain(consentId);
+  });
+
+  it("is hidden from what the borrower is asked to do", async () => {
+    // Otherwise an abandoned account leaves them permanently unfinished.
+    const { borrowerId, consentId } = await seedRetiredPending();
+    const outstanding = await pendingConsentsForBorrower(env.DB, borrowerId);
+    expect(outstanding.map((c) => c.id)).not.toContain(consentId);
+  });
+
+  it("cannot be collected into even once authorised", async () => {
+    const { borrowerId, consentId } = await seedRetiredPending();
+    await env.DB.prepare("UPDATE consents SET plaid_consent_id = 'cipher' WHERE id = ?")
+      .bind(consentId)
+      .run();
+    await setConsentStatus(env.DB, consentId, "authorized");
+
+    const r = await resolveCollectionDestination(env.DB, borrowerId, consentId);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/retired/i);
   });
 });
 

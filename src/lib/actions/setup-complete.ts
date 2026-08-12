@@ -7,7 +7,10 @@ import {
   getSetupLinkByHash,
   markSetupLinkUsed,
 } from "@/lib/repo/setup-links";
-import { pendingConsentsForBorrower } from "@/lib/repo/consents";
+import {
+  allPendingConsentsForBorrower,
+  pendingConsentsForBorrower,
+} from "@/lib/repo/consents";
 import { writeAudit } from "@/lib/repo/audit";
 import { confirmConsent } from "@/lib/engine/setup";
 
@@ -39,17 +42,25 @@ export async function completeSetupAction(
   // reported INTERNAL_SERVER_ERROR on a mandate that had in fact authorised
   // correctly. Trusting the callback would have told that borrower their account
   // failed when it had not.
-  const pending = await pendingConsentsForBorrower(db, link.borrower_id);
-  if (pending.length === 0) {
+  // Two different questions, deliberately two different lists. `toConfirm`
+  // includes mandates on retired accounts, because the bank may have made one
+  // live while an operator was retiring it and a mandate we stopped tracking is
+  // worse than a tidy list. `outstanding` drives what the borrower is told, and
+  // excludes them, so an abandoned account never approved cannot strand them.
+  const [toConfirm, outstanding] = await Promise.all([
+    allPendingConsentsForBorrower(db, link.borrower_id),
+    pendingConsentsForBorrower(db, link.borrower_id),
+  ]);
+  if (toConfirm.length === 0) {
     await markSetupLinkUsed(db, link.id);
     return { done: true, message: "Already authorised. You're all set." };
   }
 
   const plaid = getPlaidClient(env);
   const nowIso = new Date().toISOString();
-  let confirmed = 0;
+  const authorised = new Set<string>();
 
-  for (const consent of pending) {
+  for (const consent of toConfirm) {
     // Never provisioned with the bank, so there is nothing to confirm yet.
     if (!consent.plaid_consent_id) continue;
     const { status } = await confirmConsent(plaid, env.APP_ENCRYPTION_KEY, consent);
@@ -64,14 +75,22 @@ export async function completeSetupAction(
       action: "consent.authorized",
       entityType: "borrower",
       entityId: link.borrower_id,
-      metadata: { consentId: consent.id, recipientId: consent.recipient_id },
+      metadata: {
+        consentId: consent.id,
+        recipientId: consent.recipient_id,
+        // Worth finding in the audit trail later: a live mandate on an account
+        // that was retired mid-approval.
+        recipientArchived: !outstanding.some((o) => o.id === consent.id),
+      },
     });
-    confirmed++;
+    authorised.add(consent.id);
   }
 
-  const stillPending = pending.length - confirmed;
+  // Counted against what the borrower still has to do, not against everything
+  // confirmed, so approving a retired account does not change their progress.
+  const stillPending = outstanding.filter((c) => !authorised.has(c.id)).length;
 
-  if (confirmed === 0) {
+  if (stillPending > 0 && authorised.size === 0) {
     return { done: false, message: "Authorization is not complete. Please try again." };
   }
 

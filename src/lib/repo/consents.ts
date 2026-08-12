@@ -80,6 +80,36 @@ export async function pendingConsentsForBorrower(
   return results ?? [];
 }
 
+/**
+ * Every unapproved mandate, INCLUDING those on retired accounts.
+ *
+ * Answers a different question from pendingConsentsForBorrower, which asks "what
+ * must the borrower still do". This asks "what might the bank have made live
+ * without us noticing", and the two diverge in one real case: an operator retires
+ * an account while the borrower is part-way through approving it. The borrower's
+ * bank may already hold a live mandate for it, and skipping it would leave us
+ * with a real mandate we had stopped tracking.
+ *
+ * Confirmation reads this list; the borrower's "are you finished" answer reads
+ * the other. Using this one for both would strand a borrower forever on an
+ * account that was abandoned and never approved.
+ */
+export async function allPendingConsentsForBorrower(
+  db: D1Database,
+  borrowerId: string,
+): Promise<Consent[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT c.* FROM consents c
+         LEFT JOIN recipients r ON r.id = c.recipient_id
+        WHERE c.borrower_id = ? AND c.status = 'pending'
+        ORDER BY COALESCE(r.is_default, 0) DESC, r.created_at ASC, c.created_at ASC`,
+    )
+    .bind(borrowerId)
+    .all<Consent>();
+  return results ?? [];
+}
+
 /** Bind a mandate to the account it pays into. Set once, before authorisation. */
 export async function setConsentRecipient(
   db: D1Database,
