@@ -12,6 +12,13 @@ export default async function AuditPage() {
   return (
     <div>
       <h1 className="mb-6 text-2xl font-semibold tracking-tight">Audit log</h1>
+      <a
+        href="/api/audit/export"
+        className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-slate-50"
+      >
+      Export CSV
+      </a>
+
       <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
         <table className="w-full text-sm">
           <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
