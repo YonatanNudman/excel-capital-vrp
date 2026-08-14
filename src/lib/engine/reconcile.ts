@@ -27,16 +27,16 @@ export async function reconcilePayments(
   now = new Date(),
 ): Promise<ReconciliationSummary> {
   const summary: ReconciliationSummary = {
-    considered: 0,
-    matched: 0,
-    updated: 0,
-    deferred: 0,
-    errors: 0,
+    considered: [],
+    matched: [],
+    updated: [],
+    deferred: [],
+    errors: [],
   };
   const payments = await dueForReconciliation(db, now.toISOString());
 
   for (const payment of payments) {
-    summary.considered++;
+    summary.considered.push(payment);
     try {
       const provider = payment.plaid_payment_id
         ? await plaid.getPayment(payment.plaid_payment_id)
@@ -44,15 +44,15 @@ export async function reconcilePayments(
 
       if (!provider) {
         await defer(db, payment, now);
-        summary.deferred++;
+        summary.deferred.push(payment);
         continue;
       }
-      summary.matched++;
+      summary.matched.push(payment);
 
       const next = mapPlaidStatus(provider.status);
       if (!next) {
         await defer(db, payment, now);
-        summary.deferred++;
+        summary.deferred.push(payment);
         continue;
       }
 
@@ -62,14 +62,14 @@ export async function reconcilePayments(
           providerRequestId: "requestId" in provider ? provider.requestId : null,
           status: next,
         });
-        if (applied) summary.updated++;
+        if (applied) summary.updated.push(payment);
       } else {
         const transition = await applyPaymentTransition(db, payment.id, next, {
           failureReason: next === "failed" || next === "rejected" ? provider.status : null,
           providerRequestId: "requestId" in provider ? provider.requestId : null,
           providerChecked: true,
         });
-        if (transition?.applied) summary.updated++;
+        if (transition?.applied) summary.updated.push(payment);
       }
 
       if (["pending", "unknown", "submitted", "initiated", "executed"].includes(next)) {
@@ -80,10 +80,10 @@ export async function reconcilePayments(
         action: "payment.reconcile",
         entityType: "payment",
         entityId: payment.id,
-        metadata: { providerStatus: provider.status, internalStatus: next },
+        metadata: { providerStatus: provider.status, internalStatus: next, reconciliations: summary},
       });
     } catch (error) {
-      summary.errors++;
+      summary.errors.push(payment);
       await defer(db, payment, now);
       console.error(`payment reconciliation failed for ${payment.id}`, error);
     }
