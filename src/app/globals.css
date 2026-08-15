@@ -18,3 +18,7 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans);
 }
+
+td {
+  word-wrap: break-word;
+}
