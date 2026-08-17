@@ -46,7 +46,7 @@ export default async function AuditPage() {
                 </td>
                 <td className="px-4 py-2.5 font-medium text-slate-800">{e.action}</td>
                 <td className="px-4 py-2.5 text-slate-600">
-                  {e.entity_type ? `${e.entity_type}:${e.entity_id?.slice(0, 8)}` : "-"}
+                  {e.entity_type ? `${e.entity_type}:${e.entity_id?.slice(0, 10)}` : "-"}
                 </td>
                 <td className="px-4 py-2.5 text-xs text-slate-500">{e.metadata ?? ""}</td>
               </tr>

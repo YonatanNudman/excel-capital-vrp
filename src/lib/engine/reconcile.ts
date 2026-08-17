@@ -80,7 +80,7 @@ export async function reconcilePayments(
         action: "payment.reconcile",
         entityType: "payment",
         entityId: payment.id,
-        metadata: { providerStatus: provider.status, internalStatus: next },
+        metadata: { providerStatus: provider.status, internalStatus: next, ...summary},
       });
     } catch (error) {
       summary.errors++;
