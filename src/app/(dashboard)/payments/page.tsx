@@ -183,7 +183,7 @@ export default async function PaymentsPage({
       </form>
 
       <p className="mb-3 text-sm text-slate-600">
-        Showing {payments.length} payment{payments.length === 1 ? "" : "s"}
+        Showing <strong>{payments.length}</strong> payment{payments.length === 1 ? "" : "s"}
         {group === "problem" ? " that failed, were rejected, or are unconfirmed" : ""}
         {borrowerId ? ` for ${nameById.get(borrowerId) ?? "this borrower"}` : ""}
         {from || to ? ` between ${from ?? "the start"} and ${to ?? "today"}` : ""}
@@ -197,7 +197,7 @@ export default async function PaymentsPage({
               <th className="px-4 py-2.5 font-medium">Date</th>
               <th className="px-4 py-2.5 font-medium">Borrower</th>
               <th className="px-4 py-2.5 font-medium">Amount</th>
-              <th className="px-4 py-2.5 font-medium">What for</th>
+              <th className="px-4 py-2.5 font-medium">Type</th>
               <th className="px-4 py-2.5 font-medium">Reference</th>
               <th className="px-4 py-2.5 font-medium">Status</th>
             </tr>
