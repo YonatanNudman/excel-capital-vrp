@@ -50,8 +50,7 @@ export function CeilingSuggester() {
 
     setMessage(
       `Suggested £${single.toFixed(2)} ceiling per payment, which is the £${amount.toFixed(2)} repayment amount plus 20% to account for potential late fees. ` +
-      `Allowing ${times} ${frequency} collections in a month, the period ceiling should be £${periodic.toFixed(2)} per month. ` +
-      `Change either if you want.`,
+      `Allowing ${times} ${frequency} collections in a month, the period ceiling should be £${periodic.toFixed(2)} per month.`,
     );
   }
 
