@@ -20,5 +20,9 @@ body {
 }
 
 td {
-  word-wrap: break-word;
+  word-break: break-all;;
+}
+
+.max-h-cvh {
+  max-height: 75lvh;
 }

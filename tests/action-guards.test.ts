@@ -92,6 +92,10 @@ describe("hasRole ranking", () => {
     expect(hasRole(user("operator"), "admin")).toBe(false);
   });
 
+  it("lets an operator do a viewer's job", () => {
+    expect(hasRole(user("operator"), "viewer")).toBe(true);
+  });
+
   it("lets an admin do everything", () => {
     expect(hasRole(user("admin"), "operator")).toBe(true);
     expect(hasRole(user("admin"), "viewer")).toBe(true);
