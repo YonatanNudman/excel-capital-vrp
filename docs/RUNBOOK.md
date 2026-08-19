@@ -116,11 +116,13 @@ subdomain: `excel-capital.workers.dev`.
 Three workflows in `.github/workflows`:
 
 - **CI** (`ci.yml`) — typecheck, lint, unit tests, D1 integration tests, OpenNext
-  build. Runs on every PR and on push to main. Also called BY the deploy workflow
-  so a deploy runs the same checks (one copy, so they cannot drift).
-- **Deploy** (`deploy.yml`) — staging deploys automatically when main goes green.
-  Production is manual only (`workflow_dispatch`), refuses to run from any ref but
-  main, and is gated by the `production` GitHub Environment. Deploys code ONLY.
+  build. Runs on every PR, and is called BY the deploy workflow so a deploy runs
+  the same checks (one copy, so they cannot drift). Deliberately NOT triggered on
+  push to main: deploy.yml already runs there and calls this.
+- **Deploy** (`deploy.yml`) — staging deploys automatically when main goes green,
+  but only for a commit that arrived via a merged pull request. Production is
+  manual only (`workflow_dispatch`), refuses any ref but main, and requires the
+  word `production` typed into a confirm box. Deploys code ONLY.
 - **Migrate database** (`migrate-database.yml`) — manual only. Requires typing the
   environment name to confirm. Records row counts and FK targets before and after
   and FAILS if the FK targets changed (the migration 0004 detector).
