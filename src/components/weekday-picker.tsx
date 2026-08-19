@@ -24,10 +24,13 @@ export function WeekdayPicker({ selected }: { selected: number[] | null }) {
         Which day(s) can we collect on?
       </legend>
       <p className="mt-0.5 text-xs text-slate-500">
-        For <strong>Daily</strong>: tick every day you want, or tick nothing to
-        collect every day including weekends. For <strong>Weekly</strong> or{" "}
-        <strong>Fortnightly</strong>: tick the one day you want, for example
-        Tuesday. Leave it blank and the day is taken from the start date instead.
+      For <strong>Daily</strong>: tick every day you want, or tick nothing to collect every day including weekends.
+      </p>
+      <p className="mt-0.5 text-xs text-slate-500">
+      For <strong>Weekly</strong> or{" "} <strong>Fortnightly</strong>: tick the one day you want, for example Tuesday.
+      </p>
+      <p className="mt-0.5 text-xs text-slate-500">
+      Leave it blank and the day is taken from the start date instead.
       </p>
       <div className="mt-2 flex flex-wrap gap-3">
         {DAYS.map((d) => (

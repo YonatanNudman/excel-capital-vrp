@@ -49,9 +49,8 @@ export function CeilingSuggester() {
     if (periodField && !periodField.value) periodField.value = "MONTH";
 
     setMessage(
-      `Set to £${single.toFixed(2)} per payment, which is the £${amount.toFixed(2)} repayment plus 20% so a late fee still fits. ` +
-        `About ${times} ${frequency} collections land in a month, so the period ceiling is £${periodic.toFixed(2)} per month. ` +
-        `Change either if you want.`,
+      `Suggested £${single.toFixed(2)} ceiling per payment, which is the £${amount.toFixed(2)} repayment amount plus 20% to account for potential late fees. ` +
+      `Allowing ${times} ${frequency} collections in a month, the period ceiling should be £${periodic.toFixed(2)} per month.`,
     );
   }
 
