@@ -26,16 +26,6 @@ export async function getStaffById(
     .first<StaffRow>();
 }
 
-export async function listStaff(
-  db: D1Database,
-): Promise<StaffRow[]> {
-  let sql = "SELECT * FROM staff_users ORDER BY created_at DESC";
-
-  return db
-    .prepare(sql)
-    .all<StaffRow>();
-}
-
 export async function countStaff(db: D1Database): Promise<number> {
   const row = await db
     .prepare("SELECT COUNT(*) AS n FROM staff_users")
