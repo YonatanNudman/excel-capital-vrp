@@ -1,7 +1,7 @@
 import { getDb } from "@/lib/db";
 import { requireUser, AuthError } from "@/lib/auth";
 import { listAudit } from "@/lib/repo/audit";
-import { listBorrowers } from "@/lib/repo/borrowers";
+import { listStaff } from "@/lib/repo/staff";
 import { writeAudit } from "@/lib/repo/audit";
 import { csvCell as csv } from "@/lib/csv";
 
@@ -19,7 +19,7 @@ export async function GET() {
   
   const db = getDb();
   const [entries, staff] = await Promise.all([
-    listAudit(db, { limit: 300 }),
+    listAudit(db, { limit: 500 }),
     listStaff(db),
   ]);
   const emailById = new Map(staff.map((s) => [s.id, s.email]));
@@ -37,8 +37,8 @@ export async function GET() {
       csv(e.created_at),
       csv(e.actor_staff_id ? emailById.get(e.actor_staff_id) ?? "-" : "system"),
       csv(e.action),
-      csv(e.entityType),
-      csv(e.entityId),
+      csv(e.entity_type),
+      csv(e.entity_id),
       csv(e.metadata),
     ].join(","),
   );
