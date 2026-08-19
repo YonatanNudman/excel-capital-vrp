@@ -37,8 +37,8 @@ export async function GET() {
       csv(e.created_at),
       csv(e.actor_staff_id ? emailById.get(e.actor_staff_id) ?? "-" : "system"),
       csv(e.action),
-      csv(e.entityType),
-      csv(e.entityId),
+      csv(e.entity_type),
+      csv(e.entity_id),
       csv(e.metadata),
     ].join(","),
   );
