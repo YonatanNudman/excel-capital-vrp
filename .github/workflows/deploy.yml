@@ -34,9 +34,32 @@ jobs:
   deploy:
     needs: verify
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     environment:
       name: ${{ inputs.environment || 'staging' }}
     steps:
+      # Stands in for a protected branch. GitHub charges for branch protection on
+      # a private repo, so a push straight to main cannot be BLOCKED here. What it
+      # can be stopped from doing is publishing itself, which is the part that
+      # actually reaches users.
+      #
+      # A deliberate manual run still works, so an emergency fix is never trapped.
+      # It just has to be someone's decision rather than a side effect of a push.
+      - name: Refuse to auto-publish a commit that skipped review
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          merged=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" \
+            --jq '[.[] | select(.merged_at != null)] | length')
+          if [ "${merged:-0}" = "0" ]; then
+            echo "::error::This commit was pushed straight to main, so it will not publish automatically. Open a pull request, or publish deliberately with Run workflow."
+            exit 1
+          fi
+          echo "Commit arrived via a merged pull request. Proceeding."
+
       - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v7

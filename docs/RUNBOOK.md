@@ -157,6 +157,21 @@ Nothing publishes until that secret exists. Add it BEFORE merging to main, or th
 first push will fail at the deploy step (the tests still pass; it is the publish
 that cannot authenticate).
 
+### Branch protection
+
+There is none, and it is not an oversight. Both GitHub mechanisms for it,
+classic branch protection and rulesets, return
+`Upgrade to GitHub Pro or make this repository public` on a private repo on the
+free plan. Making a lender's payment system public is not an option.
+
+So a push straight to `main` cannot be blocked. Instead the deploy workflow
+refuses to AUTO-publish any commit that did not arrive through a merged pull
+request, which protects the part that actually reaches users. A deliberate
+`workflow_dispatch` run still publishes, so an emergency fix is never trapped.
+
+If the plan is upgraded, add a ruleset on `main` requiring a pull request and the
+`test` check, and keep the workflow guard as well.
+
 ### Production protection
 
 GitHub's "required reviewers" rule needs a paid plan on a private repo, and this
