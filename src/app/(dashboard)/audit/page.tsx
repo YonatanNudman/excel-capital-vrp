@@ -32,31 +32,31 @@ export default async function AuditPage() {
           </thead>
         </table>
         <div className="flex-1 overflow-y-auto">
-            <table className="w-full table-fixed">
-              <tbody className="divide-y divide-slate-100">
-                {entries.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="px-4 py-8 text-center text-slate-400">
-                      No audit entries yet.
-                    </td>
-                  </tr>
-                )}
-                {entries.map((e) => (
-                  <tr key={e.id}>
-                    <td className="px-4 py-2.5 text-slate-600">{e.created_at.slice(0, 19).replace("T", " ")}</td>
-                    <td className="px-4 py-2.5 text-slate-600">
-                      {e.actor_staff_id ? emailById.get(e.actor_staff_id) ?? "-" : "system"}
-                    </td>
-                    <td className="px-4 py-2.5 font-medium text-slate-800">{e.action}</td>
-                    <td className="px-4 py-2.5 text-slate-600">
-                      {e.entity_type ? `${e.entity_type}:${e.entity_id?.slice(0, 10)}` : "-"}
-                    </td>
-                    <td className="px-4 py-2.5 text-xs text-slate-500">{e.metadata ?? ""}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <table className="w-full table-fixed">
+            <tbody className="divide-y divide-slate-100">
+              {entries.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-slate-400">
+                    No audit entries yet.
+                  </td>
+                </tr>
+              )}
+              {entries.map((e) => (
+                <tr key={e.id} className="hover:bg-slate-50">
+                  <td className="px-4 py-2.5 text-slate-600">{e.created_at.slice(0, 19).replace("T", " ")}</td>
+                  <td className="px-4 py-2.5 text-slate-600">
+                    {e.actor_staff_id ? emailById.get(e.actor_staff_id) ?? "-" : "system"}
+                  </td>
+                  <td className="px-4 py-2.5 font-medium text-slate-800">{e.action}</td>
+                  <td className="px-4 py-2.5 text-slate-600">
+                    {e.entity_type ? `${e.entity_type}:${e.entity_id?.slice(0, 10)}` : "-"}
+                  </td>
+                  <td className="px-4 py-2.5 text-xs text-slate-500">{e.metadata ?? ""}</td>
+                </tr>s
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
