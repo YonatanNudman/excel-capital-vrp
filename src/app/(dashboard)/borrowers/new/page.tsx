@@ -85,13 +85,13 @@ export default function NewBorrowerPage() {
         </Section>
 
         <Section title="Recipient">
-          <Field label="Account name" name="recipientName" placeholder="Excel Capital Group Ltd" />
-          <Field label="Account number" name="recipientAccount" placeholder="12345678" />
-          <Field label="Sort code" name="recipientSort" placeholder="12-34-56" />
+          <Field label="Account name" name="recipientName" required placeholder="Excel Capital Group Ltd" />
+          <Field label="Account number" name="recipientAccount" required placeholder="12345678" />
+          <Field label="Sort code" name="recipientSort" required placeholder="12-34-56" />
         </Section>
 
         <Section title="Repayment schedule">
-          <Field label="Amount (£)" name="amount" type="number" placeholder="500.00" />
+          <Field label="Amount (£)" name="amount" type="number" required placeholder="500.00" />
           <label className="block">
             <span className="text-sm font-medium text-slate-700">Frequency</span>
             <select
@@ -109,7 +109,7 @@ export default function NewBorrowerPage() {
             <WeekdayPicker selected={null} />
           </div>
           <Field label="Interval days (custom only)" name="intervalDays" type="number" />
-          <Field label="Start date" name="startDate" type="date" />
+          <Field label="Start date" name="startDate" type="date" required />
           <label className="block">
             <span className="text-sm font-medium text-slate-700">End mode</span>
             <select
@@ -128,7 +128,7 @@ export default function NewBorrowerPage() {
 
         <Section title="VRP consent limits">
           <CeilingSuggester />
-          <Field label="Ceiling for any single payment (£)" name="maxPaymentAmount" type="number" placeholder="600.00" />
+          <Field label="Ceiling for any single payment (£)" name="maxPaymentAmount" type="number" required placeholder="600.00" />
           <label className="block">
             <span className="text-sm font-medium text-slate-700">The period is</span>
             <select
@@ -142,7 +142,7 @@ export default function NewBorrowerPage() {
               <option value="YEAR">Year</option>
             </select>
           </label>
-          <Field label="Ceiling across the whole period (£)" name="periodicMaxAmount" type="number" placeholder="2400.00" />
+          <Field label="Ceiling across the whole period (£)" name="periodicMaxAmount" type="number" required placeholder="2400.00" />
           <label className="block">
             <span className="text-sm font-medium text-slate-700">Alignment</span>
             <select
