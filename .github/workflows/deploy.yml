@@ -14,6 +14,11 @@ on:
         options: [staging, production]
         default: staging
         required: true
+      confirm:
+        description: 'To deploy PRODUCTION, type: production'
+        type: string
+        required: false
+        default: ''
 
 # One deploy at a time per environment. Two racing deploys can leave the Worker
 # running a build nobody asked for, and cancel-in-progress is wrong here: a
@@ -45,6 +50,16 @@ jobs:
         if: inputs.environment == 'production' && github.ref != 'refs/heads/main'
         run: |
           echo "::error::Production deploys only from main. This ref is ${{ github.ref }}."
+          exit 1
+
+      # GitHub's "required reviewer" rule needs a paid plan on a private repo, so
+      # this stands in for it: production is a dropdown option one click away from
+      # staging, and a typed word is what stops a mis-click becoming a real deploy.
+      # If the plan is ever upgraded, add the reviewer rule and keep this too.
+      - name: Refuse an unconfirmed production deploy
+        if: inputs.environment == 'production' && inputs.confirm != 'production'
+        run: |
+          echo "::error::Type 'production' in the confirm box to deploy production."
           exit 1
 
       - name: Install dependencies

@@ -132,31 +132,43 @@ comparison a human actually looks at.
 `scripts/d1-state.sh <staging|production> <before|after>` captures the same counts
 and FK targets locally, for a migration applied by hand.
 
-### One-time setup still required
+### Setup state (2026-08-19)
 
-Nothing deploys until these exist. Deliberately not automated: it means creating
-and pasting an API token, which should be done by the owner.
+Done already:
 
-1. Create a Cloudflare API token on the **Excel Capital** account (NOT TPG) with:
-   - Account · Workers Scripts · Edit
-   - Account · D1 · Edit
-   - Account · Workers KV Storage · Edit (asset/incremental cache bindings)
-   Prefer a fresh CI-only token over reusing the one in `.dev.vars`, so it can be
-   revoked without breaking local work.
-2. Add repository secrets:
-   ```
-   gh secret set CLOUDFLARE_API_TOKEN
-   gh secret set CLOUDFLARE_ACCOUNT_ID
-   ```
-3. Create the environments and protect production:
-   ```
-   gh api -X PUT repos/:owner/:repo/environments/staging
-   gh api -X PUT repos/:owner/:repo/environments/production
-   ```
-   Then in Settings → Environments → production, add yourself as a **required
-   reviewer**. Until that reviewer rule exists, the only things standing between a
-   click and a real production deploy are the manual dispatch and the main-branch
-   check. Add it before go-live.
+- Environments `staging` and `production` exist.
+- Repository secret `CLOUDFLARE_ACCOUNT_ID` is set. It is an identifier, not a
+  credential, and appears in this runbook in plaintext.
+- Production deploys require the word `production` typed into a confirm box.
+
+Still required, and deliberately NOT automated because it means creating and
+pasting an API token:
+
+- Repository secret **`CLOUDFLARE_API_TOKEN`**. Create it at
+  https://dash.cloudflare.com/profile/api-tokens on the **Excel Capital** account
+  (NOT TPG). Start from the "Edit Cloudflare Workers" template, then ADD
+  `Account · D1 · Edit` (the template omits D1, and the migration workflow needs
+  it). Under Account Resources pick the Excel Capital account only. Then:
+  `gh secret set CLOUDFLARE_API_TOKEN`
+  Prefer a fresh CI-only token over reusing the one in `.dev.vars`, so it can be
+  revoked without breaking local work.
+
+Nothing publishes until that secret exists. Add it BEFORE merging to main, or the
+first push will fail at the deploy step (the tests still pass; it is the publish
+that cannot authenticate).
+
+### Production protection
+
+GitHub's "required reviewers" rule needs a paid plan on a private repo, and this
+repo is private on a free plan, so that rule could not be added. Production is
+guarded instead by three things in the workflow itself:
+
+1. Manual dispatch only, never automatic.
+2. Refuses any ref but `main`.
+3. Requires the word `production` typed into a confirm box.
+
+If the plan is ever upgraded, add the required-reviewer rule on the `production`
+environment and keep all three.
 
 ### Letting a collaborator deploy
 
