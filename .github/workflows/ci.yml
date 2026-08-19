@@ -4,14 +4,23 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Called by deploy.yml so a deploy runs the SAME checks as CI. Duplicating the
+  # steps there would let the two drift, and the copy that matters is the one
+  # guarding a deploy.
+  workflow_call:
+
+# A superseded run tells you nothing useful, so stop it and save the minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -20,16 +29,18 @@ jobs:
         run: npm ci
 
       - name: Typecheck
-        run: npx tsc --noEmit
+        run: npm run typecheck
 
       - name: Lint
         run: npm run lint
 
+      # Run through the npm scripts rather than repeating the vitest flags here,
+      # so the config files can move without silently skipping a suite.
       - name: Unit tests
-        run: npx vitest run -c vitest.config.ts
+        run: npm run test:unit
 
       - name: D1 integration tests (Workers pool)
-        run: npx vitest run -c vitest.workers.config.mts
+        run: npm run test:integration
 
       - name: Build (OpenNext for Cloudflare)
         run: npx opennextjs-cloudflare build

@@ -13,6 +13,12 @@ Operational procedures. Keep this current as infrastructure changes.
   `X-Dev-User-Email: you@example.com` header to simulate a signed-in staff user.
   The first authenticated email becomes an admin (bootstrap).
 - Tests: `npm test` (unit + D1 integration). `npm run typecheck` for types.
+- If wrangler or the integration tests die with "You installed workerd on another
+  platform than the one you're currently using", naming the SAME package as both
+  present and required, the native binary has been removed from
+  `node_modules/@cloudflare/workerd-*/bin` while the package folder remains
+  (security software quarantining an unsigned binary will do this). `npm ci`
+  restores it. Nothing is wrong with the repo; CI installs fresh and is unaffected.
 - NOTE: `next dev` does NOT register the BorrowerPaymentCoordinator Durable
   Object, so any collection fails locally with "no such actor class". Use
   `npx wrangler dev --local` to exercise payments, or test them on staging.
@@ -94,7 +100,9 @@ Personal Cloudflare account `8a7709fc80e3e6188830ccc08e8692f3`. workers.dev
 subdomain: `excel-capital.workers.dev`.
 
 - STAGING — DEPLOYED. `https://excel-capital-vrp-staging.excel-capital.workers.dev`
-  - D1 `excel-capital-vrp-staging` (`d1f11366-09cf-4eeb-a207-28fc497cd32b`), migrated.
+  - D1 `excel-capital-vrp-staging` (`d1f11366-09cf-4eeb-a207-28fc497cd32b`),
+    migrated through `0007_multiple_destinations` (2026-08-12, counts and FK
+    targets verified unchanged).
   - Cron `0 6 * * *` registered. APP_ENV=staging, mock Plaid (sandbox).
   - Secrets set: APP_ENCRYPTION_KEY, CRON_SECRET, SETUP_LINK_SIGNING_SECRET.
   - The dashboard is intentionally LOCKED (returns "Not authorised") until
@@ -103,9 +111,69 @@ subdomain: `excel-capital.workers.dev`.
   (`21adc836-a680-44af-895d-b7b4edd78cee`) created for env separation. Deploy
   only at go-live (real Plaid + Access + owner approval).
 
+## GitHub Actions (CI and deploys)
+
+Three workflows in `.github/workflows`:
+
+- **CI** (`ci.yml`) — typecheck, lint, unit tests, D1 integration tests, OpenNext
+  build. Runs on every PR and on push to main. Also called BY the deploy workflow
+  so a deploy runs the same checks (one copy, so they cannot drift).
+- **Deploy** (`deploy.yml`) — staging deploys automatically when main goes green.
+  Production is manual only (`workflow_dispatch`), refuses to run from any ref but
+  main, and is gated by the `production` GitHub Environment. Deploys code ONLY.
+- **Migrate database** (`migrate-database.yml`) — manual only. Requires typing the
+  environment name to confirm. Records row counts and FK targets before and after
+  and FAILS if the FK targets changed (the migration 0004 detector).
+
+Migrations are deliberately NOT part of a deploy. D1 rolls a migration back on an
+FK violation and reports it like a success, so it needs the before/after
+comparison a human actually looks at.
+
+`scripts/d1-state.sh <staging|production> <before|after>` captures the same counts
+and FK targets locally, for a migration applied by hand.
+
+### One-time setup still required
+
+Nothing deploys until these exist. Deliberately not automated: it means creating
+and pasting an API token, which should be done by the owner.
+
+1. Create a Cloudflare API token on the **Excel Capital** account (NOT TPG) with:
+   - Account · Workers Scripts · Edit
+   - Account · D1 · Edit
+   - Account · Workers KV Storage · Edit (asset/incremental cache bindings)
+   Prefer a fresh CI-only token over reusing the one in `.dev.vars`, so it can be
+   revoked without breaking local work.
+2. Add repository secrets:
+   ```
+   gh secret set CLOUDFLARE_API_TOKEN
+   gh secret set CLOUDFLARE_ACCOUNT_ID
+   ```
+3. Create the environments and protect production:
+   ```
+   gh api -X PUT repos/:owner/:repo/environments/staging
+   gh api -X PUT repos/:owner/:repo/environments/production
+   ```
+   Then in Settings → Environments → production, add yourself as a **required
+   reviewer**. Until that reviewer rule exists, the only things standing between a
+   click and a real production deploy are the manual dispatch and the main-branch
+   check. Add it before go-live.
+
+### Letting a collaborator deploy
+
+A fork cannot read repository secrets, which is correct: a PR from a fork must not
+be able to use the deploy token. To let someone deploy staging themselves, add
+them as a collaborator so they push branches to this repo, then they run the
+Deploy workflow with `environment: staging` from their branch. Otherwise they send
+the branch and the owner dispatches it.
+
 ## Deploy commands
 
-- Staging: `npx opennextjs-cloudflare build && npx opennextjs-cloudflare deploy -- --env staging`
+Prefer the GitHub Actions workflows above: they run the tests first, and nobody
+has to hold the right Cloudflare credentials locally.
+
+Manual fallback (export this project's own credentials first, see Database):
+
+- Staging: `npx opennextjs-cloudflare build && npx wrangler deploy --env staging`
 - Production: same with `--env production` — ONLY after owner approves go-live
   and Plaid production secrets are set.
 - Set secrets per env: `wrangler secret bulk secrets.json --env <env>` (never
