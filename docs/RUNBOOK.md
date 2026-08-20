@@ -13,6 +13,12 @@ Operational procedures. Keep this current as infrastructure changes.
   `X-Dev-User-Email: you@example.com` header to simulate a signed-in staff user.
   The first authenticated email becomes an admin (bootstrap).
 - Tests: `npm test` (unit + D1 integration). `npm run typecheck` for types.
+- If wrangler or the integration tests die with "You installed workerd on another
+  platform than the one you're currently using", naming the SAME package as both
+  present and required, the native binary has been removed from
+  `node_modules/@cloudflare/workerd-*/bin` while the package folder remains
+  (security software quarantining an unsigned binary will do this). `npm ci`
+  restores it. Nothing is wrong with the repo; CI installs fresh and is unaffected.
 - NOTE: `next dev` does NOT register the BorrowerPaymentCoordinator Durable
   Object, so any collection fails locally with "no such actor class". Use
   `npx wrangler dev --local` to exercise payments, or test them on staging.
@@ -69,7 +75,22 @@ consent `scope` and webhook JWT verification).
 
 ## Database
 
-- Apply migrations: `npm run db:migrate:local` / `npm run db:migrate:remote`.
+- Apply migrations:
+  - local: `npm run db:migrate:local`
+  - staging: `npm run db:migrate:staging`
+  - production: `npm run db:migrate:prod` (go-live only)
+- `npm run db:migrate:remote` targets `excel-capital-vrp`, the DEVELOPMENT
+  database. It is NOT staging. Use the named scripts above.
+- ALWAYS take row counts before and after a remote migration:
+  `npm run db:counts:staging`. D1 rolls a migration back on an FK violation, so
+  without counts a rollback looks exactly like a success (this bit us on 0004).
+- Also confirm the FK clauses in `payments`/`payment_intents` are unchanged after
+  any migration that touches a referenced table:
+  `SELECT sql FROM sqlite_master WHERE name IN ('payments','payment_intents')`.
+- The shell's global `CLOUDFLARE_ACCOUNT_ID`/`CLOUDFLARE_API_TOKEN` are TPG's and
+  cannot see this project's databases. Symptom: `could not be found [code: 7404]`
+  or an empty `d1 list`. Export BOTH from `.dev.vars` first (the account id alone
+  silently picks the wrong account; the token alone fails auth).
 - D1 time-travel/backups: enable and confirm restore before go-live (the payment
   ledger must be recoverable).
 
@@ -79,7 +100,9 @@ Personal Cloudflare account `8a7709fc80e3e6188830ccc08e8692f3`. workers.dev
 subdomain: `excel-capital.workers.dev`.
 
 - STAGING — DEPLOYED. `https://excel-capital-vrp-staging.excel-capital.workers.dev`
-  - D1 `excel-capital-vrp-staging` (`d1f11366-09cf-4eeb-a207-28fc497cd32b`), migrated.
+  - D1 `excel-capital-vrp-staging` (`d1f11366-09cf-4eeb-a207-28fc497cd32b`),
+    migrated through `0007_multiple_destinations` (2026-08-12, counts and FK
+    targets verified unchanged).
   - Cron `0 6 * * *` registered. APP_ENV=staging, mock Plaid (sandbox).
   - Secrets set: APP_ENCRYPTION_KEY, CRON_SECRET, SETUP_LINK_SIGNING_SECRET.
   - The dashboard is intentionally LOCKED (returns "Not authorised") until
@@ -88,9 +111,98 @@ subdomain: `excel-capital.workers.dev`.
   (`21adc836-a680-44af-895d-b7b4edd78cee`) created for env separation. Deploy
   only at go-live (real Plaid + Access + owner approval).
 
+## GitHub Actions (CI and deploys)
+
+Three workflows in `.github/workflows`:
+
+- **CI** (`ci.yml`) — typecheck, lint, unit tests, D1 integration tests, OpenNext
+  build. Runs on every PR, and is called BY the deploy workflow so a deploy runs
+  the same checks (one copy, so they cannot drift). Deliberately NOT triggered on
+  push to main: deploy.yml already runs there and calls this.
+- **Deploy** (`deploy.yml`) — staging deploys automatically when main goes green,
+  but only for a commit that arrived via a merged pull request. Production is
+  manual only (`workflow_dispatch`), refuses any ref but main, and requires the
+  word `production` typed into a confirm box. Deploys code ONLY.
+- **Migrate database** (`migrate-database.yml`) — manual only. Requires typing the
+  environment name to confirm. Records row counts and FK targets before and after
+  and FAILS if the FK targets changed (the migration 0004 detector).
+
+Migrations are deliberately NOT part of a deploy. D1 rolls a migration back on an
+FK violation and reports it like a success, so it needs the before/after
+comparison a human actually looks at.
+
+`scripts/d1-state.sh <staging|production> <before|after>` captures the same counts
+and FK targets locally, for a migration applied by hand.
+
+### Setup state (2026-08-19)
+
+Done already:
+
+- Environments `staging` and `production` exist.
+- Repository secret `CLOUDFLARE_ACCOUNT_ID` is set. It is an identifier, not a
+  credential, and appears in this runbook in plaintext.
+- Production deploys require the word `production` typed into a confirm box.
+
+Still required, and deliberately NOT automated because it means creating and
+pasting an API token:
+
+- Repository secret **`CLOUDFLARE_API_TOKEN`**. Create it at
+  https://dash.cloudflare.com/profile/api-tokens on the **Excel Capital** account
+  (NOT TPG). Start from the "Edit Cloudflare Workers" template, then ADD
+  `Account · D1 · Edit` (the template omits D1, and the migration workflow needs
+  it). Under Account Resources pick the Excel Capital account only. Then:
+  `gh secret set CLOUDFLARE_API_TOKEN`
+  Prefer a fresh CI-only token over reusing the one in `.dev.vars`, so it can be
+  revoked without breaking local work.
+
+Nothing publishes until that secret exists. Add it BEFORE merging to main, or the
+first push will fail at the deploy step (the tests still pass; it is the publish
+that cannot authenticate).
+
+### Branch protection
+
+There is none, and it is not an oversight. Both GitHub mechanisms for it,
+classic branch protection and rulesets, return
+`Upgrade to GitHub Pro or make this repository public` on a private repo on the
+free plan. Making a lender's payment system public is not an option.
+
+So a push straight to `main` cannot be blocked. Instead the deploy workflow
+refuses to AUTO-publish any commit that did not arrive through a merged pull
+request, which protects the part that actually reaches users. A deliberate
+`workflow_dispatch` run still publishes, so an emergency fix is never trapped.
+
+If the plan is upgraded, add a ruleset on `main` requiring a pull request and the
+`test` check, and keep the workflow guard as well.
+
+### Production protection
+
+GitHub's "required reviewers" rule needs a paid plan on a private repo, and this
+repo is private on a free plan, so that rule could not be added. Production is
+guarded instead by three things in the workflow itself:
+
+1. Manual dispatch only, never automatic.
+2. Refuses any ref but `main`.
+3. Requires the word `production` typed into a confirm box.
+
+If the plan is ever upgraded, add the required-reviewer rule on the `production`
+environment and keep all three.
+
+### Letting a collaborator deploy
+
+A fork cannot read repository secrets, which is correct: a PR from a fork must not
+be able to use the deploy token. To let someone deploy staging themselves, add
+them as a collaborator so they push branches to this repo, then they run the
+Deploy workflow with `environment: staging` from their branch. Otherwise they send
+the branch and the owner dispatches it.
+
 ## Deploy commands
 
-- Staging: `npx opennextjs-cloudflare build && npx opennextjs-cloudflare deploy -- --env staging`
+Prefer the GitHub Actions workflows above: they run the tests first, and nobody
+has to hold the right Cloudflare credentials locally.
+
+Manual fallback (export this project's own credentials first, see Database):
+
+- Staging: `npx opennextjs-cloudflare build && npx wrangler deploy --env staging`
 - Production: same with `--env production` — ONLY after owner approves go-live
   and Plaid production secrets are set.
 - Set secrets per env: `wrangler secret bulk secrets.json --env <env>` (never
