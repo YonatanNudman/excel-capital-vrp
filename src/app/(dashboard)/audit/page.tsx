@@ -11,15 +11,13 @@ export default async function AuditPage() {
 
   return (
     <div>
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Audit log</h1>
-        <a
-          href="/api/audit/export"
-          className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-slate-50"
-        >
-        Export CSV
-        </a>
-      </div>
+      <h1 className="mb-6 text-2xl font-semibold tracking-tight">Audit log</h1>
+      <a
+        href="/api/audit/export"
+        className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-slate-50"
+      >
+      Export CSV
+      </a>
 
       <div className="max-h-cvh overflow-x-auto overflow-y-hidden rounded-lg border border-slate-200 bg-white flex flex-col">
         <table className="w-full table-fixed text-sm">
@@ -34,7 +32,7 @@ export default async function AuditPage() {
           </thead>
         </table>
         <div className="flex-1 overflow-y-auto">
-          <table className="w-full table-fixed">
+          <table className="w-full table-fixed text-sm">
             <tbody className="divide-y divide-slate-100">
               {entries.length === 0 && (
                 <tr>
