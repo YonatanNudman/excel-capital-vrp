@@ -32,7 +32,7 @@ export default async function AuditPage() {
           </thead>
         </table>
         <div className="flex-1 overflow-y-auto">
-          <table className="w-full table-fixed">
+          <table className="w-full table-fixed text-sm">
             <tbody className="divide-y divide-slate-100">
               {entries.length === 0 && (
                 <tr>
