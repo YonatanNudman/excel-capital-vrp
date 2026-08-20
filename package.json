@@ -16,6 +16,9 @@
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "db:migrate:local": "wrangler d1 migrations apply excel-capital-vrp --local",
     "db:migrate:remote": "wrangler d1 migrations apply excel-capital-vrp --remote",
+    "db:migrate:staging": "wrangler d1 migrations apply DB --remote --env staging",
+    "db:migrate:prod": "wrangler d1 migrations apply DB --remote --env production",
+    "db:counts:staging": "wrangler d1 execute DB --remote --env staging --command \"SELECT (SELECT COUNT(*) FROM borrowers) AS borrowers, (SELECT COUNT(*) FROM recipients) AS recipients, (SELECT COUNT(*) FROM consents) AS consents, (SELECT COUNT(*) FROM payments) AS payments, (SELECT COUNT(*) FROM repayment_schedules) AS schedules\"",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv ./cloudflare-env.d.ts"
   },
   "dependencies": {
