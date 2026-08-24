@@ -422,6 +422,42 @@ Behaviour:
    product for this use case; ask them to confirm that specific flow in writing
    and keep it on file.
 
+## Going live, in order
+
+Run `./scripts/prod-preflight.sh` at any point. It reports what production is
+still missing and changes nothing.
+
+Production ships with `COLLECTIONS_ENABLED=false`, which is the point: the whole
+thing can be deployed, logged into and exercised before it can take a penny.
+Flipping that to `true` IS go-live, and it is the LAST step.
+
+1. **Decide the hostname.** `APP_BASE_URL` and `PLAID_WEBHOOK_URL` currently
+   point at `excel-capital-vrp-prod.excel-capital.workers.dev`. If Excel Capital
+   want their own domain, change both now, before anything is registered with
+   Plaid. Changing it later means re-registering the OAuth redirect and breaks
+   borrower authorisation until it is.
+2. **Migrate the production database:** the "Migrate database" workflow with
+   `production`, or `npm run db:migrate:prod`. It is currently EMPTY (no tables).
+3. **Deploy once, with collections still off.** Nothing can move money yet.
+4. **Set the secrets** (`wrangler secret put NAME --env production`):
+   `APP_ENCRYPTION_KEY` (generate a NEW one; it can never change afterwards
+   without orphaning every encrypted bank detail), `CRON_SECRET`,
+   `COMPANIES_HOUSE_API_KEY` (required: production sets
+   `COMPANIES_HOUSE_ENFORCE=true`), `RESEND_API_KEY`, `EMAIL_FROM`.
+   Plaid keys via `./scripts/set-plaid-creds.sh production`.
+5. **Configure Cloudflare Access** for the production hostname, then set
+   `ACCESS_AUD` and `ACCESS_TEAM_DOMAIN`. Until both exist the app fails closed
+   and NOBODY can sign in, which is deliberate.
+6. **Re-deploy** so the secrets are picked up, and check
+   `./scripts/prod-preflight.sh` is all OK.
+7. **Walk it through with collections still off:** sign in, create a real
+   borrower (Companies House is enforced here), send a setup link, confirm the
+   borrower can authorise with their bank. Everything except taking money works.
+8. **Only then** set `COLLECTIONS_ENABLED` to `"true"` and deploy. Take one small
+   real payment and confirm it reaches `settled`, not just `executed`.
+
+Before step 8, the gate below must be satisfied.
+
 ## Plaid go-live gate
 
 Do NOT set `PLAID_ENV=production` or production Plaid secrets until:
