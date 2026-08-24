@@ -117,7 +117,24 @@
 			"vars": {
 				"PLAID_ENV": "production",
 				"APP_ENV": "production",
+				// The money switch. Production ships with collections OFF so the
+				// whole thing can be deployed, logged into and checked before it is
+				// able to take a penny. Turning this to "true" IS go-live, and it
+				// should be the last change made, not the first.
 				"COLLECTIONS_ENABLED": "false",
+				// Setup links are built from this, and it forms the Plaid OAuth
+				// redirect ({APP_BASE_URL}/setup/complete), which must be registered
+				// in the Plaid dashboard. Without it, links sent to borrowers have no
+				// host and simply do not work.
+				//
+				// This is the workers.dev hostname. If Excel Capital move to their own
+				// domain, change BOTH urls here and re-register the redirect with
+				// Plaid, or borrower authorisation breaks at the last step.
+				"APP_BASE_URL": "https://excel-capital-vrp-prod.excel-capital.workers.dev",
+				// Where Plaid posts payment status updates. Without it payments are
+				// submitted and never settle on their own, so the ledger silently
+				// stops matching reality.
+				"PLAID_WEBHOOK_URL": "https://excel-capital-vrp-prod.excel-capital.workers.dev/api/webhooks/plaid",
 				// Must be stated explicitly in production; getPlaidClient refuses to
 				// start without it rather than inheriting a default.
 				"PLAID_CONSENT_TYPE": "SWEEPING",
