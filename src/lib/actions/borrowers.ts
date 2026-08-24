@@ -80,6 +80,17 @@ export async function createBorrowerAction(fd: FormData): Promise<void> {
   const enforce = String(env.COMPANIES_HOUSE_ENFORCE) === "true";
   const chClient = getCompaniesHouseClient(env);
 
+  // Enforcement without a client silently enforces NOTHING: every check below
+  // sits inside `if (chClient && ...)`, so a missing API key skips them all and
+  // any typed company number is accepted unverified. An environment that claims
+  // to verify companies and does not is worse than one that never claimed to,
+  // because nobody goes looking. Refuse instead, and say which switch is wrong.
+  if (enforce && !chClient) {
+    throw new Error(
+      "Company verification is switched on for this environment but no Companies House API key is set, so nothing can be verified. Set COMPANIES_HOUSE_API_KEY, or turn COMPANIES_HOUSE_ENFORCE off.",
+    );
+  }
+
   if (chClient && companyNumber) {
     const company = await chClient.getCompany(companyNumber).catch((error: unknown) => {
       // A Companies House outage must not block onboarding unless we are
