@@ -107,9 +107,21 @@ subdomain: `excel-capital.workers.dev`.
   - Secrets set: APP_ENCRYPTION_KEY, CRON_SECRET, SETUP_LINK_SIGNING_SECRET.
   - The dashboard is intentionally LOCKED (returns "Not authorised") until
     Cloudflare Access is configured — staging does not honour the dev header.
-- PRODUCTION — NOT deployed. D1 `excel-capital-vrp-prod`
-  (`21adc836-a680-44af-895d-b7b4edd78cee`) created for env separation. Deploy
-  only at go-live (real Plaid + Access + owner approval).
+- PRODUCTION — DEPLOYED 2026-08-24.
+  `https://excel-capital-vrp-prod.excel-capital.workers.dev`
+  - D1 `excel-capital-vrp-prod` (`21adc836-a680-44af-895d-b7b4edd78cee`),
+    migrated through `0006_access_requests`.
+  - Real Plaid production keys set. Cron `0 6 * * *` registered.
+  - `COLLECTIONS_ENABLED=true` since 2026-08-24. Set it back to `"false"` and
+    deploy to stop every collection at once.
+  - Cloudflare Access: three applications, mirroring staging. The dashboard
+    requires sign in; `/setup` and `/api/webhooks/plaid` bypass it, because
+    borrowers have no account and Plaid cannot log in. Verified: the dashboard
+    302s to `excel-capital-zt.cloudflareaccess.com`, the other two reach the
+    Worker.
+  - `EMAIL_FROM=onboarding@resend.dev`, so borrower emails reach the Resend
+    account owner ONLY. Change it once `excelcapital.co.uk` is verified in
+    Resend, or borrowers never receive their setup link.
 
 ## GitHub Actions (CI and deploys)
 
