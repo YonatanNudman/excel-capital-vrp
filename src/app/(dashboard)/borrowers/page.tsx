@@ -29,6 +29,9 @@ export default async function BorrowersPage({
     <div>
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Borrowers</h1>
+        <Link href="/borrowers/archived" className="text-sm text-slate-500 hover:underline">
+          View archived
+        </Link>
         <Link
           href="/borrowers/new"
           className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
