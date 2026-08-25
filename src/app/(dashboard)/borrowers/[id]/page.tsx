@@ -25,6 +25,7 @@ import { DestinationsPanel, type DestinationRow } from "@/components/destination
 import type { DestinationChoice } from "@/components/destination-picker";
 import { BorrowerSummary } from "@/components/borrower-summary";
 import { PaymentKindTag } from "@/components/payment-kind-tag";
+import { ArchiveBorrowerButton } from "@/components/archive-buttons";
 import type { RepaymentSchedule } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -223,6 +224,9 @@ export default async function BorrowerProfile({
               {paused ? "Resume collections" : "Pause collections"}
             </button>
           </form>
+          {/* Archive, never delete. Refuses while collections could still run,
+              because hiding a borrower does not stop taking their money. */}
+          <ArchiveBorrowerButton borrowerId={borrower.id} borrowerName={borrower.legal_name} />
         </div>
       )}
 

@@ -124,12 +124,72 @@ export async function setBorrowerStatus(
     .run();
 }
 
-export async function softDeleteBorrower(
+/**
+ * Archive a borrower: hide them from the list, keep every record.
+ *
+ * Never a real delete. Payments, consents, schedules and audit rows all point at
+ * this row, so removing it would take the payment history with it. A lender has
+ * to be able to say what it collected and from whom, years later.
+ *
+ * Guarded on deleted_at IS NULL so archiving twice cannot overwrite the original
+ * archive date, which is the only record of when it happened.
+ */
+export async function archiveBorrower(
   db: D1Database,
   id: string,
 ): Promise<void> {
   await db
-    .prepare("UPDATE borrowers SET deleted_at = ? WHERE id = ?")
+    .prepare("UPDATE borrowers SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL")
     .bind(new Date().toISOString(), id)
     .run();
+}
+
+/** Bring an archived borrower back into the list. */
+export async function restoreBorrower(db: D1Database, id: string): Promise<void> {
+  await db.prepare("UPDATE borrowers SET deleted_at = NULL WHERE id = ?").bind(id).run();
+}
+
+/** Archived borrowers, most recently archived first. */
+export async function listArchivedBorrowers(db: D1Database): Promise<Borrower[]> {
+  const { results } = await db
+    .prepare("SELECT * FROM borrowers WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC")
+    .all<Borrower>();
+  return results ?? [];
+}
+
+/** An archived borrower, which getBorrower deliberately will not return. */
+export async function getBorrowerIncludingArchived(
+  db: D1Database,
+  id: string,
+): Promise<Borrower | null> {
+  return db.prepare("SELECT * FROM borrowers WHERE id = ?").bind(id).first<Borrower>();
+}
+
+/**
+ * Does this borrower have anything that means archiving them would hide live money?
+ *
+ * Archiving hides a borrower; it does NOT stop collecting from them. The nightly
+ * sweep works from schedules, not from the list, so archiving someone with a live
+ * mandate and an active schedule would keep taking their money with nobody
+ * watching. Pause is the control that stops collections; these are different
+ * things and must stay different.
+ */
+export async function archiveBlockers(
+  db: D1Database,
+  id: string,
+): Promise<{ activeSchedule: boolean; liveMandate: boolean }> {
+  const row = await db
+    .prepare(
+      `SELECT
+         (SELECT COUNT(*) FROM repayment_schedules
+           WHERE borrower_id = ? AND active = 1 AND next_run_date IS NOT NULL) AS sched,
+         (SELECT COUNT(*) FROM consents
+           WHERE borrower_id = ? AND status = 'authorized') AS mandates`,
+    )
+    .bind(id, id)
+    .first<{ sched: number; mandates: number }>();
+  return {
+    activeSchedule: (row?.sched ?? 0) > 0,
+    liveMandate: (row?.mandates ?? 0) > 0,
+  };
 }
