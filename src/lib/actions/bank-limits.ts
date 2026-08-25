@@ -10,6 +10,7 @@ import {
   getActiveConsent,
   createPendingConsent,
   updateUnauthorisedConsentLimits,
+  setConsentRecipient,
 } from "@/lib/repo/consents";
 import { parseBankAndLimits } from "@/lib/borrower-setup-input";
 
@@ -74,7 +75,7 @@ export async function updateBankAndLimitsAction(
     };
   }
 
-  await upsertRecipient(db, borrowerId, {
+  const recipient = await upsertRecipient(db, borrowerId, {
     name: v.recipientName,
     accountNumber: await protectString(v.accountNumber, env.APP_ENCRYPTION_KEY),
     sortCode: await protectString(v.sortCode, env.APP_ENCRYPTION_KEY),
@@ -87,8 +88,12 @@ export async function updateBankAndLimitsAction(
       period: v.period,
       validTo: v.validTo,
     });
+    // Bind the mandate to this account. Without it the mandate is an orphan: still
+    // collectable, but the payment history could not say where money went.
+    if (!consent.recipient_id) await setConsentRecipient(db, consent.id, recipient.id);
   } else {
     await createPendingConsent(db, borrowerId, {
+      recipientId: recipient.id,
       currency: "GBP",
       maxPaymentAmountMinor: v.maxPaymentAmountMinor,
       periodicMaxAmountMinor: v.periodicMaxAmountMinor,

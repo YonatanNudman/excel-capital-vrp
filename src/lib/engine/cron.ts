@@ -97,6 +97,10 @@ export async function runDueCollections(
         amountMinor,
         reference,
         idempotencyKey,
+        // Where this schedule's money goes. Null means the borrower's default
+        // account, which is every schedule created before multiple destinations
+        // existed, so their behaviour is unchanged.
+        consentId: schedule.consent_id,
         scheduleId: schedule.id,
         scheduledFor: dueDate,
         actorStaffId: null,

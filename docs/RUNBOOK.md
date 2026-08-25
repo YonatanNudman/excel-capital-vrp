@@ -207,6 +207,90 @@ them as a collaborator so they push branches to this repo, then they run the
 Deploy workflow with `environment: staging` from their branch. Otherwise they send
 the branch and the owner dispatches it.
 
+## GitHub Actions (CI and deploys)
+
+Three workflows in `.github/workflows`:
+
+- **CI** (`ci.yml`) — typecheck, lint, unit tests, D1 integration tests, OpenNext
+  build. Runs on every PR, and is called BY the deploy workflow so a deploy runs
+  the same checks (one copy, so they cannot drift). Deliberately NOT triggered on
+  push to main: deploy.yml already runs there and calls this.
+- **Deploy** (`deploy.yml`) — staging deploys automatically when main goes green,
+  but only for a commit that arrived via a merged pull request. Production is
+  manual only (`workflow_dispatch`), refuses any ref but main, and requires the
+  word `production` typed into a confirm box. Deploys code ONLY.
+- **Migrate database** (`migrate-database.yml`) — manual only. Requires typing the
+  environment name to confirm. Records row counts and FK targets before and after
+  and FAILS if the FK targets changed (the migration 0004 detector).
+
+Migrations are deliberately NOT part of a deploy. D1 rolls a migration back on an
+FK violation and reports it like a success, so it needs the before/after
+comparison a human actually looks at.
+
+`scripts/d1-state.sh <staging|production> <before|after>` captures the same counts
+and FK targets locally, for a migration applied by hand.
+
+### Setup state (2026-08-19)
+
+Done already:
+
+- Environments `staging` and `production` exist.
+- Repository secret `CLOUDFLARE_ACCOUNT_ID` is set. It is an identifier, not a
+  credential, and appears in this runbook in plaintext.
+- Production deploys require the word `production` typed into a confirm box.
+
+Still required, and deliberately NOT automated because it means creating and
+pasting an API token:
+
+- Repository secret **`CLOUDFLARE_API_TOKEN`**. Create it at
+  https://dash.cloudflare.com/profile/api-tokens on the **Excel Capital** account
+  (NOT TPG). Start from the "Edit Cloudflare Workers" template, then ADD
+  `Account · D1 · Edit` (the template omits D1, and the migration workflow needs
+  it). Under Account Resources pick the Excel Capital account only. Then:
+  `gh secret set CLOUDFLARE_API_TOKEN`
+  Prefer a fresh CI-only token over reusing the one in `.dev.vars`, so it can be
+  revoked without breaking local work.
+
+Nothing publishes until that secret exists. Add it BEFORE merging to main, or the
+first push will fail at the deploy step (the tests still pass; it is the publish
+that cannot authenticate).
+
+### Branch protection
+
+There is none, and it is not an oversight. Both GitHub mechanisms for it,
+classic branch protection and rulesets, return
+`Upgrade to GitHub Pro or make this repository public` on a private repo on the
+free plan. Making a lender's payment system public is not an option.
+
+So a push straight to `main` cannot be blocked. Instead the deploy workflow
+refuses to AUTO-publish any commit that did not arrive through a merged pull
+request, which protects the part that actually reaches users. A deliberate
+`workflow_dispatch` run still publishes, so an emergency fix is never trapped.
+
+If the plan is upgraded, add a ruleset on `main` requiring a pull request and the
+`test` check, and keep the workflow guard as well.
+
+### Production protection
+
+GitHub's "required reviewers" rule needs a paid plan on a private repo, and this
+repo is private on a free plan, so that rule could not be added. Production is
+guarded instead by three things in the workflow itself:
+
+1. Manual dispatch only, never automatic.
+2. Refuses any ref but `main`.
+3. Requires the word `production` typed into a confirm box.
+
+If the plan is ever upgraded, add the required-reviewer rule on the `production`
+environment and keep all three.
+
+### Letting a collaborator deploy
+
+A fork cannot read repository secrets, which is correct: a PR from a fork must not
+be able to use the deploy token. To let someone deploy staging themselves, add
+them as a collaborator so they push branches to this repo, then they run the
+Deploy workflow with `environment: staging` from their branch. Otherwise they send
+the branch and the owner dispatches it.
+
 ## Deploy commands
 
 Prefer the GitHub Actions workflows above: they run the tests first, and nobody

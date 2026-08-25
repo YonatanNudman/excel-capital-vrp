@@ -8,7 +8,7 @@ import { collectPaymentCoordinated } from "@/lib/durable/coordinated-collect";
 import { getActiveSchedule } from "@/lib/repo/schedules";
 import { toSpec } from "@/lib/repo/schedules";
 import { getSettings } from "@/lib/repo/settings";
-import { getActiveConsent } from "@/lib/repo/consents";
+import { resolveCollectionDestination } from "@/lib/repo/destinations";
 import { checkAmountAgainstConsent } from "@/lib/payment-limits";
 import { getBorrower } from "@/lib/repo/borrowers";
 import {
@@ -28,6 +28,15 @@ import { amountForRun } from "@/lib/schedule";
  * The tone drives the colour of the result banner, so "nothing bad happened"
  * never looks like a failure and vice versa.
  */
+/**
+ * Engine reasons are a mix of short fragments ("collections paused") and full
+ * sentences from destination resolution ("The borrower has not approved this
+ * account yet."). Trim the trailing stop so neither reads as "yet..".
+ */
+function reasonFragment(reason: string): string {
+  return reason.trim().replace(/\.$/, "");
+}
+
 function outcomeMessage(o: CollectOutcome): ActionResult {
   switch (o.kind) {
     case "collected":
@@ -35,9 +44,9 @@ function outcomeMessage(o: CollectOutcome): ActionResult {
     case "duplicate":
       return { message: "This payment was already sent. Nothing was charged twice.", tone: "info" };
     case "skipped":
-      return { message: `Nothing was sent: ${o.reason}.`, tone: "info" };
+      return { message: `Nothing was sent: ${reasonFragment(o.reason)}.`, tone: "info" };
     case "failed":
-      return { message: `The payment did not go through: ${o.reason}.`, tone: "error" };
+      return { message: `The payment did not go through: ${reasonFragment(o.reason)}.`, tone: "error" };
     case "unknown":
       return {
         message:
@@ -98,6 +107,19 @@ export async function executePaymentNowAction(
 
   const overrideAmount = fd.get("amount");
   const schedule = await getActiveSchedule(db, borrowerId);
+
+  // Which account this collection pays into. An explicit choice from the operator
+  // wins; otherwise a scheduled run follows its schedule, and anything else falls
+  // back to the borrower's default account. Ownership of a chosen id is proven
+  // inside the engine, so nothing here has to trust it.
+  const chosenDestination = String(fd.get("destinationConsentId") ?? "").trim();
+  const destination = await resolveCollectionDestination(
+    db,
+    borrowerId,
+    chosenDestination || schedule?.consent_id,
+  );
+  if (!destination.ok) return { message: destination.reason, tone: "error" };
+  const destinationConsentId = destination.destination.consent!.id;
   const today = new Date().toISOString().slice(0, 10);
   const isScheduledRun =
     !(typeof overrideAmount === "string" && overrideAmount.trim()) &&
@@ -119,10 +141,10 @@ export async function executePaymentNowAction(
     amountMinor = toMinorUnits(entered);
     // Tell the operator now if this breaches the mandate, rather than creating a
     // payment the bank will refuse.
-    const problem = checkAmountAgainstConsent(
-      amountMinor,
-      await getActiveConsent(db, borrowerId),
-    );
+    // Check against the mandate this money is actually going to. Each account has
+    // its own caps, so checking the default's would clear an amount the chosen
+    // account's bank then refuses.
+    const problem = checkAmountAgainstConsent(amountMinor, destination.destination.consent);
     if (problem) return { message: problem, tone: "error" };
   } else {
     if (schedule && isScheduledRun) {
@@ -169,6 +191,7 @@ export async function executePaymentNowAction(
       amountMinor,
       reference,
       idempotencyKey,
+      consentId: destinationConsentId,
       scheduleId: isScheduledRun ? schedule?.id : null,
       scheduledFor: isScheduledRun ? schedule?.next_run_date : null,
       intentId: intent.id,
@@ -244,6 +267,11 @@ export async function retryPaymentAction(
       currency: original.currency,
       reference,
       idempotencyKey,
+      // A retry must land in the SAME account as the attempt it replaces. Falling
+      // back to the default here would quietly pay a different account than the
+      // one the failed payment was for, which is the one mistake in this feature
+      // that would move real money to the wrong place.
+      consentId: original.consent_id,
       scheduleId: original.schedule_id,
       intentId: intent.id,
       retryOf: rootId,

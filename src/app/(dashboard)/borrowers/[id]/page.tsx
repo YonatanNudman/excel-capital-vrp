@@ -5,7 +5,6 @@ import { unprotectString } from "@/lib/crypto";
 import { getBorrower } from "@/lib/repo/borrowers";
 import { getActiveConsent } from "@/lib/repo/consents";
 import { getActiveSchedule, isStoredDaily, parseDaysOfWeek } from "@/lib/repo/schedules";
-import { getRecipient } from "@/lib/repo/recipients";
 import { listPaymentsForBorrower, collectionProgress } from "@/lib/repo/payments";
 import { latestSetupLinkForBorrower } from "@/lib/repo/setup-links";
 import { getCurrentUser, hasRole } from "@/lib/auth";
@@ -18,8 +17,12 @@ import {
   SetupLinkButton,
 } from "@/components/action-buttons";
 import { formatMinor } from "@/lib/money";
-import { setupReadiness } from "@/lib/readiness";
+import { destinationsReadiness } from "@/lib/readiness";
 import { loanProgress, paymentKind } from "@/lib/loan-progress";
+import { listDestinations } from "@/lib/repo/destinations";
+import { blockedReason, combinedCeiling, destinationLabel } from "@/lib/destinations";
+import { DestinationsPanel, type DestinationRow } from "@/components/destinations-panel";
+import type { DestinationChoice } from "@/components/destination-picker";
 import { BorrowerSummary } from "@/components/borrower-summary";
 import { PaymentKindTag } from "@/components/payment-kind-tag";
 import type { RepaymentSchedule } from "@/lib/types";
@@ -80,25 +83,80 @@ export default async function BorrowerProfile({
   const borrower = await getBorrower(db, id);
   if (!borrower) notFound();
 
-  const [consent, schedule, recipient, payments, user, latestLink] = await Promise.all([
-    getActiveConsent(db, id),
-    getActiveSchedule(db, id),
-    getRecipient(db, id),
-    listPaymentsForBorrower(db, id, 50),
-    getCurrentUser(),
-    latestSetupLinkForBorrower(db, id),
-  ]);
+  const [consent, schedule, payments, user, latestLink, destinations] =
+    await Promise.all([
+      getActiveConsent(db, id),
+      getActiveSchedule(db, id),
+      listPaymentsForBorrower(db, id, 50),
+      getCurrentUser(),
+      latestSetupLinkForBorrower(db, id),
+      listDestinations(db, id),
+    ]);
   const progress = loanProgress({
     schedule,
     ...(await collectionProgress(db, id, schedule?.id)),
   });
   const canOperate = user ? hasRole(user, "operator") : false;
   const paused = borrower.status === "paused";
-  // Surface an incomplete setup here rather than letting the borrower hit it.
-  const readiness = setupReadiness(recipient, consent);
+  // Surface an incomplete setup here rather than letting the borrower hit it, for
+  // every account they will be asked to approve rather than only one.
+  const readiness = destinationsReadiness(
+    destinations.map((d) => ({ label: destinationLabel(d), recipient: d.recipient, consent: d.consent })),
+  );
   const env = getEnv();
-  const accountNumber = await unprotectString(recipient?.account_number, env.APP_ENCRYPTION_KEY);
-  const sortCode = await unprotectString(recipient?.sort_code, env.APP_ENCRYPTION_KEY);
+  // Decrypt and mask every destination here, on the server. The panel and the
+  // picker are client components, so they must never receive account numbers.
+  const destinationRows: DestinationRow[] = await Promise.all(
+    destinations.map(async (d) => {
+      const [acct, sort] = await Promise.all([
+        unprotectString(d.recipient?.account_number, env.APP_ENCRYPTION_KEY),
+        unprotectString(d.recipient?.sort_code, env.APP_ENCRYPTION_KEY),
+      ]);
+      return {
+        recipientId: d.recipient?.id ?? null,
+        consentId: d.consent?.id ?? null,
+        label: destinationLabel(d),
+        masked: [maskAccount(acct), maskSortCode(sort)].filter(Boolean).join(" / ") || "No account details",
+        isDefault: Boolean(d.recipient?.is_default),
+        isArchived: d.recipient?.archived_at != null,
+        blockedReason: blockedReason(d),
+      };
+    }),
+  );
+
+  // Only accounts that can actually take money are offerable, so an operator is
+  // never presented with a choice the bank would refuse.
+  const collectableChoices: DestinationChoice[] = destinationRows
+    .filter((r) => r.blockedReason === null && r.consentId)
+    .map((r) => ({
+      consentId: r.consentId!,
+      label: r.label,
+      isDefault: r.isDefault,
+      masked: r.masked,
+    }));
+
+  // Which account "Execute payment now" will use: the schedule's, else the
+  // default. Named only when there is a choice to be confused about.
+  const scheduleDestination =
+    collectableChoices.length > 1
+      ? (destinationRows.find((r) => r.consentId === schedule?.consent_id) ??
+          collectableChoices.find((c) => c.isDefault) ??
+          collectableChoices[0])
+      : null;
+
+  // The "Went to" column only earns its space once there is more than one
+  // account. For a single-account borrower every row would say the same thing.
+  const showWentTo = destinationRows.length > 1;
+  const consentLabels = new Map(
+    destinationRows.filter((r) => r.consentId).map((r) => [r.consentId!, r.label]),
+  );
+
+  const ceiling = combinedCeiling(destinations);
+  const combinedWarning = ceiling
+    ? `${ceiling.count} approved mandates. Together their banks will allow up to ` +
+      `${formatMinor(ceiling.totalMinor, ceiling.currency)} per ${ceiling.period.toLowerCase()} ` +
+      `across all accounts, not per account. Check this is the total exposure you intend.`
+    : null;
 
   return (
     <div>
@@ -147,9 +205,14 @@ export default async function BorrowerProfile({
             borrowerId={borrower.id}
             nonce={crypto.randomUUID()}
             amountLabel={schedule ? formatMinor(schedule.amount_minor, schedule.currency) : "the entered amount"}
+            destinationLabel={scheduleDestination?.label ?? null}
           />
           <SetupLinkButton borrowerId={borrower.id} />
-          <OneOffPaymentButton borrowerId={borrower.id} nonce={crypto.randomUUID()} />
+          <OneOffPaymentButton
+            borrowerId={borrower.id}
+            nonce={crypto.randomUUID()}
+            destinations={collectableChoices}
+          />
           <form action={setBorrowerStatusAction}>
             <input type="hidden" name="borrowerId" value={borrower.id} />
             <input type="hidden" name="status" value={paused ? "active" : "paused"} />
@@ -184,11 +247,25 @@ export default async function BorrowerProfile({
           />
         </Card>
 
-        <Card title="Recipient">
-          <Row label="Account name" value={recipient?.name} />
-          <Row label="Account number" value={maskAccount(accountNumber)} />
-          <Row label="Sort code" value={maskSortCode(sortCode)} />
-          <Row label="Plaid recipient" value={recipient?.plaid_recipient_id ? "linked" : "not yet"} />
+        <Card title="Where repayments are sent">
+          {canOperate ? (
+            <DestinationsPanel
+              borrowerId={borrower.id}
+              rows={destinationRows}
+              combined={combinedWarning}
+            />
+          ) : (
+            // Viewers see the accounts but cannot change where money goes.
+            <ul className="divide-y divide-slate-100">
+              {destinationRows.map((r) => (
+                <li key={r.recipientId ?? r.consentId} className="py-2 text-sm">
+                  <span className="font-medium text-slate-800">{r.label}</span>
+                  {r.isDefault && <span className="ml-2 text-xs text-slate-500">default</span>}
+                  <div className="text-xs text-slate-500">{r.masked}</div>
+                </li>
+              ))}
+            </ul>
+          )}
         </Card>
 
         <Card title="Consent">
@@ -238,6 +315,7 @@ export default async function BorrowerProfile({
                   <th className="py-2 font-medium">Date</th>
                   <th className="py-2 font-medium">Amount</th>
                   <th className="py-2 font-medium">What for</th>
+                  {showWentTo && <th className="py-2 font-medium">Went to</th>}
                   <th className="py-2 font-medium">Reference</th>
                   <th className="py-2 font-medium">Status</th>
                   <th className="py-2 font-medium"></th>
@@ -246,7 +324,7 @@ export default async function BorrowerProfile({
               <tbody className="divide-y divide-slate-100">
                 {payments.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="py-6 text-center text-slate-400">
+                    <td colSpan={showWentTo ? 7 : 6} className="py-6 text-center text-slate-400">
                       No payments yet.
                     </td>
                   </tr>
@@ -256,6 +334,14 @@ export default async function BorrowerProfile({
                     <td className="py-2 text-slate-600">{p.created_at.slice(0, 10)}</td>
                     <td className="py-2 font-medium">{formatMinor(p.amount_minor, p.currency)}</td>
                     <td className="py-2"><PaymentKindTag kind={paymentKind(p)} /></td>
+                    {showWentTo && (
+                      <td className="py-2 text-slate-600">
+                        {/* Resolved through the payment's consent, which is the
+                            mandate that actually moved the money, so history can
+                            never disagree with where it went. */}
+                        {consentLabels.get(p.consent_id ?? "") ?? "-"}
+                      </td>
+                    )}
                     <td className="py-2 text-slate-600">{p.reference ?? "-"}</td>
                     <td className="py-2">
                       <StatusBadge status={p.status} />

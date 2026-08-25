@@ -103,6 +103,9 @@ export async function runAutoRetries(
       currency: candidate.currency,
       reference: uniqueReferenceFromBase(candidate.reference ?? "ExcelPayment", retryKey(root, attempt)),
       idempotencyKey: retryKey(root, attempt),
+      // Same account as the attempt being retried, never the default. See the
+      // matching note in retryPaymentAction.
+      consentId: candidate.consent_id,
       scheduleId: candidate.schedule_id,
       retryOf: root,
       actorStaffId: null,

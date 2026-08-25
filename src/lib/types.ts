@@ -67,6 +67,12 @@ export interface Recipient {
   name: string;
   account_number: string | null;
   sort_code: string | null;
+  /** Staff-facing name for this destination; falls back to `name` when unset. */
+  label: string | null;
+  /** Exactly one per borrower, enforced by a partial unique index. */
+  is_default: number;
+  /** Retired from the picker but kept readable, since payment history points here. */
+  archived_at: string | null;
   created_at: string;
 }
 
@@ -76,6 +82,8 @@ export interface Consent {
   plaid_consent_id: string | null;
   plaid_consent_id_hash: string | null;
   plaid_recipient_id: string | null;
+  /** The account this mandate pays into. Fixed once the borrower approves it. */
+  recipient_id: string | null;
   status: ConsentStatus;
   currency: string;
   max_payment_amount_minor: number | null;
@@ -104,6 +112,8 @@ export interface RepaymentSchedule {
   end_count: number | null;
   end_total_minor: number | null;
   next_run_date: string | null;
+  /** Which mandate scheduled runs collect against. Null means the default one. */
+  consent_id: string | null;
   active: number;
   created_at: string;
 }

@@ -12,6 +12,7 @@ import {
   type ActionResult,
   type ActionTone,
 } from "@/lib/actions/payments";
+import { DestinationPicker, type DestinationChoice } from "@/components/destination-picker";
 
 const btn =
   "rounded-md px-3 py-1.5 text-sm font-medium disabled:opacity-50 transition-colors";
@@ -120,10 +121,19 @@ export function ExecuteNowButton({
   borrowerId,
   nonce,
   amountLabel,
+  /**
+   * Where this collection will land, shown only when the borrower has more than
+   * one account. Deliberately NOT a picker: this button runs the repayment
+   * schedule, whose destination was chosen when the schedule was set up, and
+   * letting it be overridden here would make the schedule's setting a suggestion.
+   * Stating it prevents the surprise without inviting an ad hoc change.
+   */
+  destinationLabel,
 }: {
   borrowerId: string;
   nonce: string;
   amountLabel: string;
+  destinationLabel?: string | null;
 }) {
   const [confirming, setConfirming] = useState(false);
   const [state, formAction, pending] = useActionState<ActionState, FormData>(
@@ -151,7 +161,10 @@ export function ExecuteNowButton({
         <input type="hidden" name="nonce" value={nonce} />
         {confirming ? (
           <>
-            <span className="text-sm font-medium text-amber-800">Collect {amountLabel} now?</span>
+            <span className="text-sm font-medium text-amber-800">
+              Collect {amountLabel} now
+              {destinationLabel ? ` into ${destinationLabel}` : ""}?
+            </span>
             <button
               type="submit"
               disabled={pending}
@@ -233,9 +246,11 @@ export function RetryButton({ paymentId }: { paymentId: string }) {
 export function OneOffPaymentButton({
   borrowerId,
   nonce,
+  destinations = [],
 }: {
   borrowerId: string;
   nonce: string;
+  destinations?: DestinationChoice[];
 }) {
   const [openForm, setOpenForm] = useState(false);
   const [amount, setAmount] = useState("");
@@ -310,6 +325,7 @@ export function OneOffPaymentButton({
             Shows on their statement. Letters and numbers only.
           </span>
         </label>
+        <DestinationPicker destinations={destinations} />
         <button
           type="submit"
           disabled={pending || !amount}

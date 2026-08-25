@@ -18,6 +18,8 @@ export interface ScheduleInput {
   endDate?: string | null;
   endCount?: number | null;
   endTotalMinor?: number | null;
+  /** Mandate to collect against, and so the account paid into. Null = default. */
+  consentId?: string | null;
 }
 
 const ALL_DAYS = [1, 2, 3, 4, 5, 6, 7];
@@ -137,14 +139,17 @@ export async function upsertSchedule(
       .bind(borrowerId),
     db.prepare(
       `INSERT INTO repayment_schedules
-        (id, borrower_id, amount_minor, currency, frequency, interval_days,
+        (id, borrower_id, consent_id, amount_minor, currency, frequency, interval_days,
          days_of_week, start_date, end_mode, end_date, end_count, end_total_minor,
          next_run_date, active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
     )
     .bind(
       id,
       borrowerId,
+      // Which account scheduled collections pay into. Null means the borrower's
+      // default, which is every schedule that existed before this was a choice.
+      input.consentId ?? null,
       input.amountMinor,
       input.currency ?? "GBP",
       encoded.frequency,

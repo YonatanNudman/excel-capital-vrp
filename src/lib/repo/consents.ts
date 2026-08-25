@@ -1,22 +1,125 @@
 import type { Consent, ConsentStatus } from "@/lib/types";
 import { newId } from "@/lib/ids";
 
+/**
+ * The borrower's PRIMARY mandate: the one belonging to their default account.
+ *
+ * Since migration 0007 a borrower can hold several mandates, so "active consent"
+ * had to be given a single unambiguous meaning. Anchoring it to the default
+ * account keeps every pre-existing caller correct, because a borrower with one
+ * account has exactly one mandate and that account is their default.
+ *
+ * Callers that must honour an operator's explicit choice of destination should
+ * use resolveCollectionDestination instead, which also proves ownership.
+ */
 export async function getActiveConsent(
   db: D1Database,
   borrowerId: string,
 ): Promise<Consent | null> {
-  // Prefer an authorized consent; otherwise the most recent.
-  const authorized = await db
+  // Prefer an authorised mandate on the default account, then any authorised
+  // mandate, then the most recent of anything. The ordering matters during
+  // re-consent, when a revoked mandate and a fresh pending one coexist.
+  const preferred = await db
     .prepare(
-      "SELECT * FROM consents WHERE borrower_id = ? AND status = 'authorized' ORDER BY created_at DESC LIMIT 1",
+      `SELECT c.* FROM consents c
+         LEFT JOIN recipients r ON r.id = c.recipient_id
+        WHERE c.borrower_id = ? AND c.status = 'authorized'
+        ORDER BY COALESCE(r.is_default, 0) DESC, c.created_at DESC
+        LIMIT 1`,
     )
     .bind(borrowerId)
     .first<Consent>();
-  if (authorized) return authorized;
+  if (preferred) return preferred;
   return db
-    .prepare("SELECT * FROM consents WHERE borrower_id = ? ORDER BY created_at DESC LIMIT 1")
+    .prepare(
+      `SELECT c.* FROM consents c
+         LEFT JOIN recipients r ON r.id = c.recipient_id
+        WHERE c.borrower_id = ?
+        ORDER BY COALESCE(r.is_default, 0) DESC, c.created_at DESC
+        LIMIT 1`,
+    )
     .bind(borrowerId)
     .first<Consent>();
+}
+
+/** The mandate for one specific account, preferring an authorised one. */
+export async function getConsentForRecipient(
+  db: D1Database,
+  recipientId: string,
+): Promise<Consent | null> {
+  return db
+    .prepare(
+      `SELECT * FROM consents WHERE recipient_id = ?
+        ORDER BY (status = 'authorized') DESC, created_at DESC LIMIT 1`,
+    )
+    .bind(recipientId)
+    .first<Consent>();
+}
+
+/**
+ * Mandates still awaiting the borrower's approval, oldest first.
+ *
+ * The setup page walks this list so the borrower approves every account in one
+ * sitting. Ordered by the account list rather than by consent age so the
+ * borrower sees "account 1 of 2" in the same order staff configured them.
+ */
+export async function pendingConsentsForBorrower(
+  db: D1Database,
+  borrowerId: string,
+): Promise<Consent[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT c.* FROM consents c
+         LEFT JOIN recipients r ON r.id = c.recipient_id
+        WHERE c.borrower_id = ? AND c.status = 'pending'
+          AND (r.archived_at IS NULL OR r.id IS NULL)
+        ORDER BY COALESCE(r.is_default, 0) DESC, r.created_at ASC, c.created_at ASC`,
+    )
+    .bind(borrowerId)
+    .all<Consent>();
+  return results ?? [];
+}
+
+/**
+ * Every unapproved mandate, INCLUDING those on retired accounts.
+ *
+ * Answers a different question from pendingConsentsForBorrower, which asks "what
+ * must the borrower still do". This asks "what might the bank have made live
+ * without us noticing", and the two diverge in one real case: an operator retires
+ * an account while the borrower is part-way through approving it. The borrower's
+ * bank may already hold a live mandate for it, and skipping it would leave us
+ * with a real mandate we had stopped tracking.
+ *
+ * Confirmation reads this list; the borrower's "are you finished" answer reads
+ * the other. Using this one for both would strand a borrower forever on an
+ * account that was abandoned and never approved.
+ */
+export async function allPendingConsentsForBorrower(
+  db: D1Database,
+  borrowerId: string,
+): Promise<Consent[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT c.* FROM consents c
+         LEFT JOIN recipients r ON r.id = c.recipient_id
+        WHERE c.borrower_id = ? AND c.status = 'pending'
+        ORDER BY COALESCE(r.is_default, 0) DESC, r.created_at ASC, c.created_at ASC`,
+    )
+    .bind(borrowerId)
+    .all<Consent>();
+  return results ?? [];
+}
+
+/** Bind a mandate to the account it pays into. Set once, before authorisation. */
+export async function setConsentRecipient(
+  db: D1Database,
+  consentId: string,
+  recipientId: string,
+): Promise<void> {
+  await db
+    .prepare("UPDATE consents SET recipient_id = ? WHERE id = ? AND status <> 'authorized'")
+    .bind(recipientId, consentId)
+    .run();
 }
 
 export async function getConsent(db: D1Database, id: string): Promise<Consent | null> {
@@ -24,6 +127,8 @@ export async function getConsent(db: D1Database, id: string): Promise<Consent | 
 }
 
 export interface ConsentLimits {
+  /** The account this mandate pays into. Null only for legacy single-account rows. */
+  recipientId?: string | null;
   currency?: string;
   maxPaymentAmountMinor?: number | null;
   period?: string | null;
@@ -57,13 +162,14 @@ export async function createPendingConsent(
   await db
     .prepare(
       `INSERT INTO consents
-        (id, borrower_id, status, currency, max_payment_amount_minor, period,
+        (id, borrower_id, recipient_id, status, currency, max_payment_amount_minor, period,
          periodic_alignment, periodic_max_amount_minor, valid_from, valid_to)
-       VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
       borrowerId,
+      limits.recipientId ?? null,
       limits.currency ?? "GBP",
       limits.maxPaymentAmountMinor ?? null,
       limits.period ?? null,

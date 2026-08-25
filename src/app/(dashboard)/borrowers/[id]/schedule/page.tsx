@@ -7,6 +7,8 @@ import { updateScheduleAction } from "@/lib/actions/borrowers";
 import { fromMinorUnits } from "@/lib/money";
 
 import { WeekdayPicker } from "@/components/weekday-picker";
+import { listDestinations } from "@/lib/repo/destinations";
+import { destinationLabel } from "@/lib/destinations";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +22,7 @@ export default async function SchedulePage({
   const borrower = await getBorrower(db, id);
   if (!borrower) notFound();
   const s = await getActiveSchedule(db, id);
+  const destinations = await listDestinations(db, id);
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -82,6 +85,34 @@ export default async function SchedulePage({
             <input name="endTotal" type="number" step="0.01" defaultValue={s?.end_total_minor ? fromMinorUnits(s.end_total_minor) : ""} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" />
           </label>
         </div>
+        {destinations.length > 1 && (
+          // Only offered when there is a real choice. Unlike the one-off picker
+          // this lists accounts the borrower has not approved yet, because
+          // configuring the schedule before sending the setup link is the normal
+          // order of work.
+          <label className="block">
+            <span className="text-sm font-medium text-slate-700">Pay repayments into</span>
+            <select
+              name="destinationConsentId"
+              defaultValue={s?.consent_id ?? ""}
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+            >
+              <option value="">Default account</option>
+              {destinations
+                .filter((d) => d.consent && !d.recipient?.archived_at)
+                .map((d) => (
+                  <option key={d.consent!.id} value={d.consent!.id}>
+                    {destinationLabel(d)}
+                    {d.recipient?.is_default ? " (default)" : ""}
+                    {d.consent!.status !== "authorized" ? " — not approved yet" : ""}
+                  </option>
+                ))}
+            </select>
+            <span className="mt-1 block text-xs text-slate-500">
+              Every scheduled collection goes here. One-off payments can go elsewhere.
+            </span>
+          </label>
+        )}
         <div className="flex justify-end">
           <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700">
             Save schedule
