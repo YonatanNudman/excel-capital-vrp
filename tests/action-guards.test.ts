@@ -92,8 +92,38 @@ describe("hasRole ranking", () => {
     expect(hasRole(user("operator"), "admin")).toBe(false);
   });
 
+  it("lets an operator do a viewer's job", () => {
+    expect(hasRole(user("operator"), "viewer")).toBe(true);
+  });
+
   it("lets an admin do everything", () => {
     expect(hasRole(user("admin"), "operator")).toBe(true);
     expect(hasRole(user("admin"), "viewer")).toBe(true);
+  });
+});
+
+describe("Companies House enforcement cannot be enforced without a key", () => {
+  /**
+   * Production sets COMPANIES_HOUSE_ENFORCE=true. Every verification branch in
+   * createBorrowerAction sits inside `if (chClient && companyNumber)`, so with no
+   * API key the client is null, the whole block is skipped, and a typed company
+   * number is accepted unverified while the config claims otherwise.
+   *
+   * Found when production was configured to enforce and the key had been skipped.
+   * Asserted on the source because the action needs a full request context to
+   * run, and the property worth protecting is that the guard exists at all.
+   */
+  const source = readFileSync(
+    new URL("../src/lib/actions/borrowers.ts", import.meta.url),
+    "utf8",
+  );
+
+  it("refuses to proceed when enforcement is on and no client exists", () => {
+    expect(source).toMatch(/if\s*\(\s*enforce\s*&&\s*!chClient\s*\)/);
+  });
+
+  it("names both switches, so whoever hits it knows which one to change", () => {
+    expect(source).toMatch(/COMPANIES_HOUSE_API_KEY/);
+    expect(source).toMatch(/COMPANIES_HOUSE_ENFORCE/);
   });
 });

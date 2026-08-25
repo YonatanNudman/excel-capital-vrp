@@ -24,8 +24,8 @@ describe("parseBankAndLimits: happy path", () => {
     });
   });
 
-  it("accepts a sort code written with spaces or slashes", () => {
-    for (const sortCode of ["12 34 56", "12/34/56", "123456"]) {
+  it("accepts a sort code written with & without spaces, slashes, or dashes", () => {
+    for (const sortCode of ["12 34 56", "12/34/56", "123456", "12-34/56", "1234-56"]) {
       const r = parseBankAndLimits({ ...valid, sortCode });
       expect(r.errors).toEqual([]);
       expect(r.value?.sortCode).toBe("123456");
@@ -40,7 +40,7 @@ describe("parseBankAndLimits: happy path", () => {
 
 describe("parseBankAndLimits: bank details", () => {
   it("rejects a sort code that is not six digits", () => {
-    for (const sortCode of ["1234", "1234567", "ab-cd-ef"]) {
+    for (const sortCode of ["1234", "1234567", "ab-cd-ef", "12-34-e6"]) {
       const r = parseBankAndLimits({ ...valid, sortCode });
       expect(r.errors.join(" ")).toMatch(/sort code/i);
       expect(r.value).toBeUndefined();

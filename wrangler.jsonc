@@ -117,14 +117,40 @@
 			"vars": {
 				"PLAID_ENV": "production",
 				"APP_ENV": "production",
-				"COLLECTIONS_ENABLED": "false",
+				// The money switch. Turned ON 2026-08-24, with the owner's explicit
+				// go-ahead and production holding zero borrowers, zero mandates and
+				// zero schedules, so arming it could not collect from anyone.
+				//
+				// What actually gates real money from here is onboarding the first
+				// borrower and that borrower authorising a mandate with their bank.
+				// Set this back to "false" to stop every collection at once; it is
+				// checked before any payment is attempted.
+				"COLLECTIONS_ENABLED": "true",
+				// Setup links are built from this, and it forms the Plaid OAuth
+				// redirect ({APP_BASE_URL}/setup/complete), which must be registered
+				// in the Plaid dashboard. Without it, links sent to borrowers have no
+				// host and simply do not work.
+				//
+				// This is the workers.dev hostname. If Excel Capital move to their own
+				// domain, change BOTH urls here and re-register the redirect with
+				// Plaid, or borrower authorisation breaks at the last step.
+				"APP_BASE_URL": "https://excel-capital-vrp-prod.excel-capital.workers.dev",
+				// Where Plaid posts payment status updates. Without it payments are
+				// submitted and never settle on their own, so the ledger silently
+				// stops matching reality.
+				"PLAID_WEBHOOK_URL": "https://excel-capital-vrp-prod.excel-capital.workers.dev/api/webhooks/plaid",
 				// Must be stated explicitly in production; getPlaidClient refuses to
 				// start without it rather than inheriting a default.
 				"PLAID_CONSENT_TYPE": "SWEEPING",
 				// Every production borrower must be a real, active registered company.
 				"COMPANIES_HOUSE_ENFORCE": "true",
 				"EMAIL_REPLY_TO": "accounting@xlcapital.co.uk",
-				"STAFF_BOOTSTRAP_ADMINS": "yonatan@thepipelinegroup.io"
+				// Auto-provisioned as admin on first sign in. Everyone else signs in,
+				// lands on "Ask for access", and is approved or declined from /staff.
+				// The gmail address is here because that is what Cloudflare Access
+				// authenticates him as; without it the owner locks himself out of his
+				// own production dashboard, which is exactly what happened.
+				"STAFF_BOOTSTRAP_ADMINS": "yonatan@thepipelinegroup.io,nudman.yonatan@gmail.com"
 			},
 			"images": { "binding": "IMAGES" },
 			"durable_objects": {

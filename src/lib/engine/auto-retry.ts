@@ -137,7 +137,7 @@ export async function runAutoRetries(
       action: "payment.auto_retry",
       entityType: "payment",
       entityId: root,
-      metadata: { attempt, outcome: outcome.kind },
+      metadata: { attemptNum: attempt, outcome: outcome.kind, ...summary},
     });
   }
 

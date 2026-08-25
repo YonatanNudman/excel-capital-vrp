@@ -33,6 +33,25 @@ d1() {
 # wrangler prefixes its banner before the JSON, so take from the first bracket on.
 json_only() { sed -n '/^\[/,$p'; }
 
+# A database with no tables yet is a normal state, not an error: it is exactly
+# what the FIRST migration of a new environment starts from. Counting rows in
+# tables that do not exist makes wrangler error and the snapshot crash, which
+# previously took the whole migration down before it applied anything.
+tables=$(d1 "SELECT name FROM sqlite_master WHERE type='table';" \
+  | json_only \
+  | python3 -c 'import json,sys; print(" ".join(r["name"] for r in json.load(sys.stdin)[0]["results"]))' \
+  2>/dev/null || echo "")
+
+if ! grep -qw "borrowers" <<<"$tables"; then
+  echo '{"database": "empty, no tables yet"}' > "/tmp/counts-${PHASE}.txt"
+  : > "/tmp/fk-${PHASE}.txt"
+  echo "--- counts ($PHASE) ---"
+  cat "/tmp/counts-${PHASE}.txt"
+  echo "--- foreign key targets ($PHASE) ---"
+  echo "(none: no tables yet)"
+  exit 0
+fi
+
 d1 "SELECT
       (SELECT COUNT(*) FROM borrowers) AS borrowers,
       (SELECT COUNT(*) FROM recipients) AS recipients,

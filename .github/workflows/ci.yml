@@ -2,6 +2,8 @@ name: CI
 
 on:
   pull_request:
+  # Kept from Gilad's change: lets the checks be run on demand.
+  workflow_dispatch:
   # Called by deploy.yml so a deploy runs the SAME checks as CI. Duplicating the
   # steps there would let the two drift, and the copy that matters is the one
   # guarding a deploy.

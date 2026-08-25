@@ -107,9 +107,105 @@ subdomain: `excel-capital.workers.dev`.
   - Secrets set: APP_ENCRYPTION_KEY, CRON_SECRET, SETUP_LINK_SIGNING_SECRET.
   - The dashboard is intentionally LOCKED (returns "Not authorised") until
     Cloudflare Access is configured — staging does not honour the dev header.
-- PRODUCTION — NOT deployed. D1 `excel-capital-vrp-prod`
-  (`21adc836-a680-44af-895d-b7b4edd78cee`) created for env separation. Deploy
-  only at go-live (real Plaid + Access + owner approval).
+- PRODUCTION — DEPLOYED 2026-08-24.
+  `https://excel-capital-vrp-prod.excel-capital.workers.dev`
+  - D1 `excel-capital-vrp-prod` (`21adc836-a680-44af-895d-b7b4edd78cee`),
+    migrated through `0006_access_requests`.
+  - Real Plaid production keys set. Cron `0 6 * * *` registered.
+  - `COLLECTIONS_ENABLED=true` since 2026-08-24. Set it back to `"false"` and
+    deploy to stop every collection at once.
+  - Cloudflare Access: three applications, mirroring staging. The dashboard
+    requires sign in; `/setup` and `/api/webhooks/plaid` bypass it, because
+    borrowers have no account and Plaid cannot log in. Verified: the dashboard
+    302s to `excel-capital-zt.cloudflareaccess.com`, the other two reach the
+    Worker.
+  - `EMAIL_FROM=onboarding@resend.dev`, so borrower emails reach the Resend
+    account owner ONLY. Change it once `excelcapital.co.uk` is verified in
+    Resend, or borrowers never receive their setup link.
+
+## GitHub Actions (CI and deploys)
+
+Three workflows in `.github/workflows`:
+
+- **CI** (`ci.yml`) — typecheck, lint, unit tests, D1 integration tests, OpenNext
+  build. Runs on every PR, and is called BY the deploy workflow so a deploy runs
+  the same checks (one copy, so they cannot drift). Deliberately NOT triggered on
+  push to main: deploy.yml already runs there and calls this.
+- **Deploy** (`deploy.yml`) — staging deploys automatically when main goes green,
+  but only for a commit that arrived via a merged pull request. Production is
+  manual only (`workflow_dispatch`), refuses any ref but main, and requires the
+  word `production` typed into a confirm box. Deploys code ONLY.
+- **Migrate database** (`migrate-database.yml`) — manual only. Requires typing the
+  environment name to confirm. Records row counts and FK targets before and after
+  and FAILS if the FK targets changed (the migration 0004 detector).
+
+Migrations are deliberately NOT part of a deploy. D1 rolls a migration back on an
+FK violation and reports it like a success, so it needs the before/after
+comparison a human actually looks at.
+
+`scripts/d1-state.sh <staging|production> <before|after>` captures the same counts
+and FK targets locally, for a migration applied by hand.
+
+### Setup state (2026-08-19)
+
+Done already:
+
+- Environments `staging` and `production` exist.
+- Repository secret `CLOUDFLARE_ACCOUNT_ID` is set. It is an identifier, not a
+  credential, and appears in this runbook in plaintext.
+- Production deploys require the word `production` typed into a confirm box.
+
+Still required, and deliberately NOT automated because it means creating and
+pasting an API token:
+
+- Repository secret **`CLOUDFLARE_API_TOKEN`**. Create it at
+  https://dash.cloudflare.com/profile/api-tokens on the **Excel Capital** account
+  (NOT TPG). Start from the "Edit Cloudflare Workers" template, then ADD
+  `Account · D1 · Edit` (the template omits D1, and the migration workflow needs
+  it). Under Account Resources pick the Excel Capital account only. Then:
+  `gh secret set CLOUDFLARE_API_TOKEN`
+  Prefer a fresh CI-only token over reusing the one in `.dev.vars`, so it can be
+  revoked without breaking local work.
+
+Nothing publishes until that secret exists. Add it BEFORE merging to main, or the
+first push will fail at the deploy step (the tests still pass; it is the publish
+that cannot authenticate).
+
+### Branch protection
+
+There is none, and it is not an oversight. Both GitHub mechanisms for it,
+classic branch protection and rulesets, return
+`Upgrade to GitHub Pro or make this repository public` on a private repo on the
+free plan. Making a lender's payment system public is not an option.
+
+So a push straight to `main` cannot be blocked. Instead the deploy workflow
+refuses to AUTO-publish any commit that did not arrive through a merged pull
+request, which protects the part that actually reaches users. A deliberate
+`workflow_dispatch` run still publishes, so an emergency fix is never trapped.
+
+If the plan is upgraded, add a ruleset on `main` requiring a pull request and the
+`test` check, and keep the workflow guard as well.
+
+### Production protection
+
+GitHub's "required reviewers" rule needs a paid plan on a private repo, and this
+repo is private on a free plan, so that rule could not be added. Production is
+guarded instead by three things in the workflow itself:
+
+1. Manual dispatch only, never automatic.
+2. Refuses any ref but `main`.
+3. Requires the word `production` typed into a confirm box.
+
+If the plan is ever upgraded, add the required-reviewer rule on the `production`
+environment and keep all three.
+
+### Letting a collaborator deploy
+
+A fork cannot read repository secrets, which is correct: a PR from a fork must not
+be able to use the deploy token. To let someone deploy staging themselves, add
+them as a collaborator so they push branches to this repo, then they run the
+Deploy workflow with `environment: staging` from their branch. Otherwise they send
+the branch and the owner dispatches it.
 
 ## GitHub Actions (CI and deploys)
 
@@ -421,6 +517,42 @@ Behaviour:
    party, and this flow is borrower to lender. Plaid have said it is the right
    product for this use case; ask them to confirm that specific flow in writing
    and keep it on file.
+
+## Going live, in order
+
+Run `./scripts/prod-preflight.sh` at any point. It reports what production is
+still missing and changes nothing.
+
+Production ships with `COLLECTIONS_ENABLED=false`, which is the point: the whole
+thing can be deployed, logged into and exercised before it can take a penny.
+Flipping that to `true` IS go-live, and it is the LAST step.
+
+1. **Decide the hostname.** `APP_BASE_URL` and `PLAID_WEBHOOK_URL` currently
+   point at `excel-capital-vrp-prod.excel-capital.workers.dev`. If Excel Capital
+   want their own domain, change both now, before anything is registered with
+   Plaid. Changing it later means re-registering the OAuth redirect and breaks
+   borrower authorisation until it is.
+2. **Migrate the production database:** the "Migrate database" workflow with
+   `production`, or `npm run db:migrate:prod`. It is currently EMPTY (no tables).
+3. **Deploy once, with collections still off.** Nothing can move money yet.
+4. **Set the secrets** (`wrangler secret put NAME --env production`):
+   `APP_ENCRYPTION_KEY` (generate a NEW one; it can never change afterwards
+   without orphaning every encrypted bank detail), `CRON_SECRET`,
+   `COMPANIES_HOUSE_API_KEY` (required: production sets
+   `COMPANIES_HOUSE_ENFORCE=true`), `RESEND_API_KEY`, `EMAIL_FROM`.
+   Plaid keys via `./scripts/set-plaid-creds.sh production`.
+5. **Configure Cloudflare Access** for the production hostname, then set
+   `ACCESS_AUD` and `ACCESS_TEAM_DOMAIN`. Until both exist the app fails closed
+   and NOBODY can sign in, which is deliberate.
+6. **Re-deploy** so the secrets are picked up, and check
+   `./scripts/prod-preflight.sh` is all OK.
+7. **Walk it through with collections still off:** sign in, create a real
+   borrower (Companies House is enforced here), send a setup link, confirm the
+   borrower can authorise with their bank. Everything except taking money works.
+8. **Only then** set `COLLECTIONS_ENABLED` to `"true"` and deploy. Take one small
+   real payment and confirm it reaches `settled`, not just `executed`.
+
+Before step 8, the gate below must be satisfied.
 
 ## Plaid go-live gate
 

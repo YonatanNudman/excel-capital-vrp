@@ -78,6 +78,14 @@ jobs:
       # so fail loudly rather than leave it in a summary nobody reads.
       - name: Fail if foreign keys were rewritten
         run: |
+          # First migration of an empty database: there is no "before" to compare
+          # against, and every foreign key is newly created rather than rewritten.
+          if [ ! -s /tmp/fk-before.txt ]; then
+            echo "Database had no tables beforehand, so there is nothing to compare."
+            echo "Foreign keys created by this migration:"
+            cat /tmp/fk-after.txt
+            exit 0
+          fi
           if ! diff -u /tmp/fk-before.txt /tmp/fk-after.txt; then
             echo "::error::Foreign key clauses changed. Do NOT deploy. See migrations/0004 and docs/RUNBOOK.md."
             exit 1

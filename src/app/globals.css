@@ -18,3 +18,11 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans);
 }
+
+td {
+  word-break: break-all;;
+}
+
+.max-h-cvh {
+  max-height: 75lvh;
+}

@@ -183,53 +183,58 @@ export default async function PaymentsPage({
       </form>
 
       <p className="mb-3 text-sm text-slate-600">
-        Showing {payments.length} payment{payments.length === 1 ? "" : "s"}
+        Showing <strong>{payments.length}</strong> payment{payments.length === 1 ? "" : "s"}
         {group === "problem" ? " that failed, were rejected, or are unconfirmed" : ""}
         {borrowerId ? ` for ${nameById.get(borrowerId) ?? "this borrower"}` : ""}
         {from || to ? ` between ${from ?? "the start"} and ${to ?? "today"}` : ""}
         {payments.length === 300 ? " (showing the most recent 300)" : ""}.
       </p>
 
-      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-        <table className="w-full text-sm">
+      <div className="max-h-cvh overflow-x-auto overflow-y-hidden rounded-lg border border-slate-200 bg-white flex flex-col">
+        <table className="w-full table-fixed text-sm">
           <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
             <tr>
               <th className="px-4 py-2.5 font-medium">Date</th>
               <th className="px-4 py-2.5 font-medium">Borrower</th>
               <th className="px-4 py-2.5 font-medium">Amount</th>
-              <th className="px-4 py-2.5 font-medium">What for</th>
+              <th className="px-4 py-2.5 font-medium">Type</th>
               <th className="px-4 py-2.5 font-medium">Reference</th>
               <th className="px-4 py-2.5 font-medium">Status</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
-            {payments.length === 0 && (
-              <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
-                  {filtered
-                    ? "No payments match those filters."
-                    : "No payments yet."}
-                </td>
-              </tr>
-            )}
-            {payments.map((p) => (
-              <tr key={p.id} className="hover:bg-slate-50">
-                <td className="px-4 py-3 text-slate-600">{p.created_at.slice(0, 16).replace("T", " ")}</td>
-                <td className="px-4 py-3">
-                  <Link href={`/borrowers/${p.borrower_id}`} className="font-medium text-slate-900 hover:underline">
-                    {nameById.get(p.borrower_id) ?? p.borrower_id.slice(0, 8)}
-                  </Link>
-                </td>
-                <td className="px-4 py-3 font-medium">{formatMinor(p.amount_minor, p.currency)}</td>
-                <td className="px-4 py-3"><PaymentKindTag kind={paymentKind(p)} /></td>
-                <td className="px-4 py-3 text-slate-600">{p.reference ?? "-"}</td>
-                <td className="px-4 py-3">
-                  <StatusBadge status={p.status} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
         </table>
+        <div className="flex-1 overflow-y-auto">
+          <table className="w-full table-fixed text-sm">
+            <tbody className="divide-y divide-slate-100">
+              {payments.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
+                    {filtered
+                      ? "No payments match those filters."
+                      : "No payments yet."
+                    }
+                  </td>
+                </tr>
+              )}
+              {payments.map((p) => (
+                <tr key={p.id} className="hover:bg-slate-50">
+                  <td className="px-4 py-3 text-slate-600">{p.created_at.slice(0, 16).replace("T", " ")}</td>
+                  <td className="px-4 py-3">
+                    <Link href={`/borrowers/${p.borrower_id}`} className="font-medium text-slate-900 hover:underline">
+                      {nameById.get(p.borrower_id) ?? p.borrower_id.slice(0, 8)}
+                    </Link>
+                  </td>
+                  <td className="px-4 py-3 font-medium">{formatMinor(p.amount_minor, p.currency)}</td>
+                  <td className="px-4 py-3"><PaymentKindTag kind={paymentKind(p)} /></td>
+                  <td className="px-4 py-3 text-slate-600">{p.reference ?? "-"}</td>
+                  <td className="px-4 py-3">
+                    <StatusBadge status={p.status} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
