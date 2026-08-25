@@ -3,13 +3,25 @@
 import { useActionState, useCallback, useState } from "react";
 import { completeSetupAction, type CompleteState } from "@/lib/actions/setup-complete";
 
+/**
+ * Plaid calls onExit with (error, metadata). The previous declaration here was
+ * `() => void`, so the error was accepted and silently discarded: Plaid was
+ * reporting exactly what had gone wrong and nothing ever looked at it.
+ */
+interface PlaidError {
+  error_code?: string;
+  error_message?: string;
+  display_message?: string;
+}
+
 declare global {
   interface Window {
     Plaid?: {
       create(config: {
         token: string;
         onSuccess: () => void;
-        onExit?: () => void;
+        onExit?: (err: PlaidError | null, metadata?: unknown) => void;
+        onEvent?: (eventName: string, metadata?: unknown) => void;
       }): { open: () => void };
     };
   }
@@ -31,29 +43,84 @@ export function SetupLauncher({
     null,
   );
   const [launching, setLaunching] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
 
-  // Real Plaid Link: load the SDK on demand, open with the link token, and on
-  // success submit the completion form. Not exercised until real credentials
-  // exist, but wired so it works once they do.
+  /**
+   * Open Plaid Link, and make every failure visible.
+   *
+   * Borrowers reported "I click Connect your bank and nothing happens". Every
+   * failure path here used to be silent: the script tag had no onerror, create()
+   * was not guarded, and the error Plaid passes to onExit was discarded. A dead
+   * button tells the borrower nothing and tells us less, so each one now says
+   * what went wrong and leaves the button usable for another try.
+   */
   const openPlaid = useCallback(
     (submit: () => void) => {
+      setProblem(null);
       setLaunching(true);
-      const start = () => {
-        const handler = window.Plaid?.create({
-          token: linkToken,
-          onSuccess: () => submit(),
-          onExit: () => setLaunching(false),
-        });
-        handler?.open();
+
+      const failed = (message: string, detail?: unknown) => {
+        // Logged as well as shown: the borrower gets plain words, and whoever
+        // helps them can read the provider's own wording in the console.
+        console.error("plaid link failed", message, detail);
+        setProblem(message);
+        setLaunching(false);
       };
+
+      const start = () => {
+        if (!window.Plaid) {
+          failed(
+            "Your bank connection could not start. Please check your internet connection and try again.",
+          );
+          return;
+        }
+        try {
+          const handler = window.Plaid.create({
+            token: linkToken,
+            onSuccess: () => submit(),
+            onExit: (err) => {
+              setLaunching(false);
+              if (!err) return; // The borrower simply closed it; not a failure.
+              failed(
+                err.display_message ||
+                  err.error_message ||
+                  "Your bank could not complete this authorisation. Please try again, or contact Excel Capital.",
+                err,
+              );
+            },
+            onEvent: (eventName, metadata) => {
+              if (eventName === "ERROR") console.error("plaid link error", metadata);
+            },
+          });
+          if (!handler) {
+            failed("Your bank connection could not start. Please try again.");
+            return;
+          }
+          handler.open();
+        } catch (e) {
+          failed(
+            "Your bank connection could not start. Please try again, or contact Excel Capital.",
+            e,
+          );
+        }
+      };
+
       if (window.Plaid) {
         start();
-      } else {
-        const s = document.createElement("script");
-        s.src = PLAID_SCRIPT;
-        s.onload = start;
-        document.body.appendChild(s);
+        return;
       }
+
+      const s = document.createElement("script");
+      s.src = PLAID_SCRIPT;
+      s.onload = start;
+      // Without this, a blocked or failed script left the button stuck on
+      // "Opening Plaid…" forever with no explanation. Ad and tracker blockers do
+      // block this CDN, which is a very ordinary thing for a phone to be doing.
+      s.onerror = () =>
+        failed(
+          "Your bank connection could not load. If you use an ad blocker or private browsing, try again in a normal browser window.",
+        );
+      document.body.appendChild(s);
     },
     [linkToken],
   );
@@ -95,6 +162,11 @@ export function SetupLauncher({
         >
           {launching ? "Opening Plaid…" : "Connect your bank"}
         </button>
+      )}
+      {problem && (
+        <p role="alert" className="mt-3 rounded-md bg-red-50 p-3 text-sm text-red-700">
+          {problem}
+        </p>
       )}
       {state && !state.done && (
         <p className="mt-2 text-sm text-red-600">{state.message}</p>
