@@ -22,12 +22,16 @@ declare global {
         onSuccess: () => void;
         onExit?: (err: PlaidError | null, metadata?: unknown) => void;
         onEvent?: (eventName: string, metadata?: unknown) => void;
+        receivedRedirectUri?: string;
       }): { open: () => void };
     };
   }
 }
 
 const PLAID_SCRIPT = "https://cdn.plaid.com/link/v2/stable/link-initialize.js";
+
+/** Shared with the /setup/complete page, which resumes the flow after a bank redirect. */
+export const SETUP_RESUME_KEY = "excel-capital-setup-resume";
 
 export function SetupLauncher({
   token,
@@ -66,6 +70,19 @@ export function SetupLauncher({
         setProblem(message);
         setLaunching(false);
       };
+
+      // Banks take the borrower away to their own site and send them back to
+      // /setup/complete. Link can only be resumed there if it is given the SAME
+      // link token, and that page has no other way to know it, so stash it now.
+      try {
+        sessionStorage.setItem(
+          SETUP_RESUME_KEY,
+          JSON.stringify({ linkToken, token }),
+        );
+      } catch {
+        // Private browsing can refuse storage. The in-page flow still works; only
+        // a bank that redirects away would be affected, and that is reported there.
+      }
 
       const start = () => {
         if (!window.Plaid) {
@@ -122,7 +139,7 @@ export function SetupLauncher({
         );
       document.body.appendChild(s);
     },
-    [linkToken],
+    [linkToken, token],
   );
 
   if (state?.done) {
