@@ -2,8 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb } from "@/lib/db";
 import { getBorrower } from "@/lib/repo/borrowers";
-import { getRecipient } from "@/lib/repo/recipients";
-import { getActiveConsent } from "@/lib/repo/consents";
+import { listDestinations } from "@/lib/repo/destinations";
 import { unprotectString } from "@/lib/crypto";
 import { getEnv } from "@/lib/db";
 import { updateBorrowerDetailsAction } from "@/lib/actions/borrowers";
@@ -22,10 +21,18 @@ export default async function EditBorrowerPage({
   if (!borrower) notFound();
 
   const env = getEnv();
-  const [recipient, consent] = await Promise.all([
-    getRecipient(db, id),
-    getActiveConsent(db, id),
-  ]);
+  // Show the DEFAULT account, and its own mandate, so the bank details and the
+  // limits on this page always describe the same account. Reading the newest
+  // recipient alongside the default account's consent meant a borrower with two
+  // accounts saw one account's sort code beside another's limits.
+  const destinations = (await listDestinations(db, id)).filter(
+    (d) => d.recipient && d.recipient.archived_at == null,
+  );
+  const target =
+    destinations.find((d) => d.recipient!.is_default) ?? destinations[0] ?? null;
+  const recipient = target?.recipient ?? null;
+  const consent = target?.consent ?? null;
+  const otherAccounts = Math.max(0, destinations.length - 1);
   const accountNumber = await unprotectString(recipient?.account_number, env.APP_ENCRYPTION_KEY);
   const sortCode = await unprotectString(recipient?.sort_code, env.APP_ENCRYPTION_KEY);
   const major = (minor: number | null | undefined) =>
@@ -98,6 +105,17 @@ export default async function EditBorrowerPage({
       <h2 className="mt-8 mb-3 text-lg font-semibold tracking-tight">
         Bank details and payment limits
       </h2>
+      {otherAccounts > 0 && (
+        // Say which account this form edits. With more than one, an unlabelled
+        // form is an invitation to change the wrong account's bank details.
+        <p className="mb-3 rounded-md bg-slate-50 p-3 text-sm text-slate-700">
+          This edits <strong>{recipient?.label?.trim() || recipient?.name || "the default account"}</strong>,
+          the default account.{" "}
+          {otherAccounts === 1 ? "There is 1 other account" : `There are ${otherAccounts} other accounts`}
+          {" "}for this borrower: manage {otherAccounts === 1 ? "it" : "them"} under
+          &ldquo;Where repayments are sent&rdquo; on the borrower page.
+        </p>
+      )}
       <BankLimitsForm
         borrowerId={id}
         locked={consent?.status === "authorized"}

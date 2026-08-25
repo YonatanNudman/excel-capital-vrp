@@ -5,9 +5,8 @@ import { getDb, getEnv } from "@/lib/db";
 import { requireRole } from "@/lib/auth";
 import { writeAudit } from "@/lib/repo/audit";
 import { protectString } from "@/lib/crypto";
-import { upsertRecipient } from "@/lib/repo/recipients";
+import { addRecipient, listDestinations, updateRecipient } from "@/lib/repo/destinations";
 import {
-  getActiveConsent,
   createPendingConsent,
   updateUnauthorisedConsentLimits,
   setConsentRecipient,
@@ -65,7 +64,20 @@ export async function updateBankAndLimitsAction(
   if (parsed.errors.length > 0 || !parsed.value) return { errors: parsed.errors, values };
   const v = parsed.value;
 
-  const consent = await getActiveConsent(db, borrowerId);
+  // Both halves of this form must describe the SAME account.
+  //
+  // They did not. upsertRecipient edited the NEWEST recipient row while
+  // getActiveConsent returned the DEFAULT account's mandate, and once a borrower
+  // has two accounts those are different rows. The form showed the backup
+  // account's sort code beside the main account's limits, and saving overwrote
+  // the backup's bank details. Anchor everything to the default destination.
+  const destinations = (await listDestinations(db, borrowerId)).filter(
+    (d) => d.recipient && d.recipient.archived_at == null,
+  );
+  const target =
+    destinations.find((d) => d.recipient!.is_default) ?? destinations[0] ?? null;
+  const consent = target?.consent ?? null;
+
   if (consent?.status === "authorized") {
     return {
       errors: [
@@ -75,11 +87,26 @@ export async function updateBankAndLimitsAction(
     };
   }
 
-  const recipient = await upsertRecipient(db, borrowerId, {
-    name: v.recipientName,
-    accountNumber: await protectString(v.accountNumber, env.APP_ENCRYPTION_KEY),
-    sortCode: await protectString(v.sortCode, env.APP_ENCRYPTION_KEY),
-  });
+  const accountNumber = await protectString(v.accountNumber, env.APP_ENCRYPTION_KEY);
+  const sortCode = await protectString(v.sortCode, env.APP_ENCRYPTION_KEY);
+
+  // Update the account this form is actually about, by id, rather than whichever
+  // row happens to be newest.
+  let recipient = target?.recipient ?? null;
+  if (recipient) {
+    await updateRecipient(db, recipient.id, {
+      name: v.recipientName,
+      label: recipient.label,
+      accountNumber,
+      sortCode,
+    });
+  } else {
+    recipient = await addRecipient(db, borrowerId, {
+      name: v.recipientName,
+      accountNumber,
+      sortCode,
+    });
+  }
 
   if (consent) {
     await updateUnauthorisedConsentLimits(db, consent.id, {
