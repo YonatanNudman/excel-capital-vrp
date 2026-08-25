@@ -193,3 +193,44 @@ export async function archiveBlockers(
     liveMandate: (row?.mandates ?? 0) > 0,
   };
 }
+
+/**
+ * Set the borrower's status from the mandates they actually still have.
+ *
+ * Since a borrower can hold several mandates, one per payout account, a single
+ * revoked or expired mandate no longer means the borrower is finished. The old
+ * code set borrowers.status straight from whichever consent the webhook was
+ * about, so revoking a spare account marked the whole borrower revoked, and
+ * collectPayment skips a revoked borrower outright. Their perfectly good main
+ * mandate would have stopped collecting with nothing on screen to explain it.
+ *
+ * `whenNoneLeft` is the status to apply only if no live mandate remains.
+ *
+ * A paused borrower is left alone. Pause is an operator's deliberate decision to
+ * stop collecting, and a webhook must never quietly undo it.
+ */
+export async function syncBorrowerStatusToMandates(
+  db: D1Database,
+  borrowerId: string,
+  whenNoneLeft: "revoked" | "expired",
+): Promise<void> {
+  const borrower = await getBorrower(db, borrowerId);
+  if (!borrower || borrower.status === "paused") return;
+
+  const row = await db
+    .prepare("SELECT COUNT(*) AS n FROM consents WHERE borrower_id = ? AND status = 'authorized'")
+    .bind(borrowerId)
+    .first<{ n: number }>();
+  const live = row?.n ?? 0;
+
+  if (live > 0) {
+    // Still collectable. Undo a previous revoked/expired flag if one is stale.
+    if (borrower.status === "revoked" || borrower.status === "expired") {
+      await setBorrowerStatus(db, borrowerId, "active");
+    }
+    return;
+  }
+  if (borrower.status !== whenNoneLeft) {
+    await setBorrowerStatus(db, borrowerId, whenNoneLeft);
+  }
+}
