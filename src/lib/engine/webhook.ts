@@ -4,7 +4,7 @@ import { failureEmail, receiptEmail } from "@/lib/mailer/templates";
 import { mapPlaidStatus } from "@/lib/payment-state";
 import type { PlaidClient } from "@/lib/plaid";
 import { writeAudit } from "@/lib/repo/audit";
-import { getBorrower } from "@/lib/repo/borrowers";
+import { getBorrower, syncBorrowerStatusToMandates } from "@/lib/repo/borrowers";
 import {
   getConsentByPlaidHash,
   listConsentsMissingPlaidHash,
@@ -161,11 +161,16 @@ async function applyConsentWebhook(
   if (status === "authorized") {
     statements.push(db.prepare("UPDATE borrowers SET status = 'active' WHERE id = ?")
       .bind(consent.borrower_id));
-  } else if (status === "revoked" || status === "expired") {
-    statements.push(db.prepare("UPDATE borrowers SET status = ? WHERE id = ?")
-      .bind(status, consent.borrower_id));
   }
   await db.batch(statements);
+
+  // Revoking or expiring ONE mandate does not finish the borrower: they may hold
+  // another live one for a different payout account. Decide from what is left
+  // rather than from this single consent, or a spare account being revoked would
+  // silently stop collections on a perfectly good main mandate.
+  if (status === "revoked" || status === "expired") {
+    await syncBorrowerStatusToMandates(db, consent.borrower_id, status);
+  }
   await writeAudit(db, {
     actorStaffId: null,
     action: "consent.webhook",

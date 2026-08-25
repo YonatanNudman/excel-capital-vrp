@@ -1,5 +1,5 @@
 import { overdueConsents, consentsExpiringSoon, setConsentStatus } from "@/lib/repo/consents";
-import { setBorrowerStatus, getBorrower } from "@/lib/repo/borrowers";
+import { getBorrower, syncBorrowerStatusToMandates } from "@/lib/repo/borrowers";
 import { writeAudit, listAudit } from "@/lib/repo/audit";
 import type { Mailer } from "@/lib/mailer";
 import { reconsentEmail } from "@/lib/mailer/templates";
@@ -42,7 +42,9 @@ export async function runConsentMaintenance(
   for (const c of overdue) {
     try {
       await setConsentStatus(db, c.id, "expired");
-      await setBorrowerStatus(db, c.borrower_id, "expired");
+      // Only finish the borrower if this was their LAST live mandate. With more
+      // than one payout account, one expiring must not stop the others.
+      await syncBorrowerStatusToMandates(db, c.borrower_id, "expired");
       await writeAudit(db, {
         actorStaffId: null,
         action: "consent.expired",
