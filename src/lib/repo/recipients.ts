@@ -11,6 +11,19 @@ export async function getRecipient(
     .first<Recipient>();
 }
 
+/**
+ * DANGEROUS with more than one account. Prefer addRecipient / updateRecipient
+ * from repo/destinations, which act on a recipient BY ID.
+ *
+ * This updates the NEWEST recipient row for the borrower. When they had exactly
+ * one account that was the same thing as "their account". Now they can have
+ * several, and the newest is usually the spare rather than the default, so this
+ * silently edits the wrong account. It did exactly that on the borrower edit
+ * page, overwriting a backup account's real bank details.
+ *
+ * The one remaining caller is borrower CREATION, where the borrower provably has
+ * no recipients yet, so the upsert can only insert.
+ */
 export async function upsertRecipient(
   db: D1Database,
   borrowerId: string,
