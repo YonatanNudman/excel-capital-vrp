@@ -73,6 +73,44 @@ consent `scope` and webhook JWT verification).
    `X-Dev-User-Email` (only honoured when `APP_ENV=development`). Put that dev
    email in `STAFF_BOOTSTRAP_ADMINS` so it provisions.
 
+## Cloudflare Access: the borrower-facing paths
+
+A borrower has no login. Any path they touch must BYPASS Access, and that
+includes the page's own assets. Four applications per environment:
+
+| Path | Policy | Why |
+| --- | --- | --- |
+| the hostname | allow (app approves) | staff dashboard |
+| `/setup` | bypass | borrowers have no account |
+| `/api/webhooks/plaid` | bypass | Plaid cannot log in |
+| `/_next` | bypass | the page's own JavaScript and CSS |
+
+`/_next` is the one that is easy to miss and the hardest to diagnose. Without it
+a borrower loads `/setup/<token>`, gets the HTML, and then EVERY script and
+stylesheet is redirected 302 to the Access login they cannot pass. React never
+hydrates, so the page renders unstyled and "Connect your bank" does nothing at
+all: no error, no console message, because there is no JavaScript running to
+raise one.
+
+Worse, it looks intermittent. Anyone with a staff Access session in the same
+browser loads the assets fine and sees it work perfectly, so it fails only for
+the actual borrowers and only on their own devices. That cost several days here,
+with fixes aimed at the button while the real cause was the assets.
+
+The bundles are client-side build output and contain no secrets, so making them
+public costs nothing.
+
+Check it the way a borrower would, with no session:
+
+```
+curl -s -o /dev/null -w '%{http_code}\n' "$BASE/_next/static/chunks/<one>.js"   # expect 200
+curl -s -o /dev/null -w '%{http_code}\n' "$BASE/borrowers"                      # expect 302
+```
+
+Take the chunk filename from that environment's own HTML: the hashes differ
+between builds, so a staging filename tested against production just fails to
+connect and tells you nothing.
+
 ## Database
 
 - Apply migrations:
