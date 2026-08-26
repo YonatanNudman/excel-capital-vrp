@@ -100,7 +100,12 @@ with fixes aimed at the button while the real cause was the assets.
 The bundles are client-side build output and contain no secrets, so making them
 public costs nothing.
 
-Check it the way a borrower would, with no session:
+Check it with `./scripts/check-borrower-access.sh <staging|production>`, which
+tests every borrower-facing path the way a borrower experiences it and confirms
+the staff pages are still locked. Run it after ANY Access change, and before
+telling anyone the borrower flow works.
+
+Or by hand, with no session:
 
 ```
 curl -s -o /dev/null -w '%{http_code}\n' "$BASE/_next/static/chunks/<one>.js"   # expect 200
