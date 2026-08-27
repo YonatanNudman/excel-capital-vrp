@@ -153,6 +153,7 @@ export async function runDueCollectionsFromEnv(
 ): Promise<
   CronSummary & {
     consentExpired: number;
+    consentRevokedAtBank: number;
     consentExpiringSoon: number;
     autoRetried: number;
     autoRetryFailed: number;
@@ -167,7 +168,7 @@ export async function runDueCollectionsFromEnv(
   // Each phase is isolated: a failure in one is audited and must never stop the
   // others, so a single bad row cannot wedge a whole day's collections.
   const maintenance = await phase(env.DB, today, "consent_maintenance", () =>
-    runConsentMaintenance(env.DB, now, mailer),
+    runConsentMaintenance(env.DB, now, mailer, plaid, env.APP_ENCRYPTION_KEY),
   );
   const collections = await phase(env.DB, today, "collections", () =>
     runDueCollections(
@@ -204,6 +205,7 @@ export async function runDueCollectionsFromEnv(
       ended: 0,
     }),
     consentExpired: maintenance?.expired ?? 0,
+    consentRevokedAtBank: maintenance?.revokedAtBank ?? 0,
     consentExpiringSoon: maintenance?.expiringSoon ?? 0,
     autoRetried: retries?.retried ?? 0,
     autoRetryFailed: retries?.failed ?? 0,

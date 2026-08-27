@@ -238,6 +238,23 @@ export async function setConsentPlaidHash(
     .run();
 }
 
+/**
+ * Every mandate we believe is live.
+ *
+ * Checked against Plaid daily, because a borrower can cancel a VRP mandate from
+ * their banking app at any time without telling us. We are notified, but the
+ * authorisation flow already proved that depending on a provider notification
+ * arriving is how a real state change gets silently missed.
+ */
+export async function authorisedConsents(db: D1Database): Promise<Consent[]> {
+  const { results } = await db
+    .prepare(
+      "SELECT * FROM consents WHERE status = 'authorized' AND plaid_consent_id IS NOT NULL LIMIT 500",
+    )
+    .all<Consent>();
+  return results ?? [];
+}
+
 /** Authorised consents whose valid_to has already passed. */
 export async function overdueConsents(db: D1Database, nowIso: string): Promise<Consent[]> {
   const { results } = await db
