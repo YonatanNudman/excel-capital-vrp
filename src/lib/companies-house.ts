@@ -90,6 +90,16 @@ export function companiesHouseFailureMessage(error: unknown): string {
   if (typeof status === "number" && status >= 500) {
     return "Companies House is having problems at their end. Try again shortly.";
   }
+  // No status at all means the request never completed. Say what actually
+  // happened rather than a shrug: a timeout and a malformed key look identical
+  // to staff otherwise, and only one of them is worth retrying.
+  const detail = error instanceof Error ? error.message : "";
+  if (/timeout|aborted|timed out/i.test(detail)) {
+    return "Companies House did not respond in time. Try again, or type the details in by hand.";
+  }
+  if (detail) {
+    return `Could not reach Companies House (${detail}). Try again, or type the details in by hand.`;
+  }
   return "Could not reach Companies House. Try again, or type the details in by hand.";
 }
 
@@ -129,9 +139,12 @@ export class CompaniesHouseClient {
         signal: AbortSignal.timeout(8_000),
       });
     } catch (error) {
-      throw new CompaniesHouseError(
-        error instanceof Error ? error.message : String(error),
-      );
+      // No HTTP status exists here: the request never completed. Keep the
+      // underlying reason, because "could not reach" covers a timeout, a DNS
+      // failure and a key that cannot even be encoded, and those need different
+      // responses from whoever is looking at it.
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new CompaniesHouseError(reason);
     }
 
     let body: Record<string, unknown> = {};

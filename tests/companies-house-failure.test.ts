@@ -48,3 +48,29 @@ describe("companiesHouseFailureMessage", () => {
     expect(companiesHouseFailureMessage(new Error("boom"))).toMatch(/could not reach/i);
   });
 });
+
+describe("failures that never reached Companies House", () => {
+  /**
+   * The only path that produces a CompaniesHouseError with NO http status is the
+   * fetch itself failing. That covers a timeout, a DNS failure and an API key so
+   * malformed it cannot even be encoded into an auth header. Staff saw one
+   * identical sentence for all of them, and so did we.
+   */
+  it("names a timeout as a timeout", () => {
+    const m = companiesHouseFailureMessage(
+      new CompaniesHouseError("The operation was aborted due to timeout"),
+    );
+    expect(m).toMatch(/did not respond in time/i);
+  });
+
+  it("carries the underlying reason through for anything else", () => {
+    const m = companiesHouseFailureMessage(
+      new CompaniesHouseError("InvalidCharacterError"),
+    );
+    expect(m).toMatch(/InvalidCharacterError/);
+  });
+
+  it("still has a plain fallback when there is no detail at all", () => {
+    expect(companiesHouseFailureMessage({})).toMatch(/could not reach/i);
+  });
+});
