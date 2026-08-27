@@ -66,6 +66,33 @@ export class CompaniesHouseError extends Error {
   }
 }
 
+/**
+ * Why the lookup failed, in words that say whether retrying can ever help.
+ *
+ * Everything used to collapse into "Could not reach Companies House. Try again,
+ * or type the details in by hand." That is actively wrong advice for a bad API
+ * key: retrying never works, and staff type the company in by hand instead,
+ * which is exactly the unverified data the register check exists to prevent.
+ */
+export function companiesHouseFailureMessage(error: unknown): string {
+  const status = error instanceof CompaniesHouseError ? error.httpStatus : undefined;
+
+  if (status === 401 || status === 403) {
+    // A configuration fault, not a blip. Say so, and do not invite a retry.
+    return "Companies House rejected our access key, so lookups cannot work until it is fixed. Tell whoever set the platform up; do not type the company in by hand.";
+  }
+  if (status === 429) {
+    return "Companies House is busy and asked us to slow down. Wait a few seconds and search again.";
+  }
+  if (status === 404) {
+    return "No company found with that name or number. Check the number on the register.";
+  }
+  if (typeof status === "number" && status >= 500) {
+    return "Companies House is having problems at their end. Try again shortly.";
+  }
+  return "Could not reach Companies House. Try again, or type the details in by hand.";
+}
+
 export function isCompaniesHouseConfigured(env: {
   COMPANIES_HOUSE_API_KEY?: string;
 }): boolean {

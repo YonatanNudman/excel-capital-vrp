@@ -3,6 +3,7 @@ import { requireRole, AuthError } from "@/lib/auth";
 import {
   getCompaniesHouseClient,
   CompaniesHouseError,
+  companiesHouseFailureMessage,
 } from "@/lib/companies-house";
 
 export const dynamic = "force-dynamic";
@@ -37,11 +38,14 @@ export async function GET(request: Request) {
     const results = await client.search(query);
     return Response.json({ configured: true, results });
   } catch (error) {
-    const message =
-      error instanceof CompaniesHouseError
-        ? "Could not reach Companies House. Try again, or type the details in by hand."
-        : "Something went wrong searching Companies House.";
-    console.error("companies house search failed", error);
-    return Response.json({ configured: true, results: [], error: message }, { status: 502 });
+    // Log the status so production tells us WHICH failure this was. The message
+    // shown to staff already distinguishes them, but the log is what turns a
+    // report of "it does not work" into an answer without a live debugging session.
+    const status = error instanceof CompaniesHouseError ? error.httpStatus : undefined;
+    console.error("companies house search failed", { httpStatus: status, error: String(error) });
+    return Response.json(
+      { configured: true, results: [], error: companiesHouseFailureMessage(error) },
+      { status: 502 },
+    );
   }
 }
