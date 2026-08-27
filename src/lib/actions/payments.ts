@@ -5,7 +5,7 @@ import { getDb, getEnv } from "@/lib/db";
 import { requireRole } from "@/lib/auth";
 import type { CollectOutcome } from "@/lib/engine/collect";
 import { collectPaymentCoordinated } from "@/lib/durable/coordinated-collect";
-import { getActiveSchedule } from "@/lib/repo/schedules";
+import { getActiveSchedule, setScheduleNextRun } from "@/lib/repo/schedules";
 import { toSpec } from "@/lib/repo/schedules";
 import { getSettings } from "@/lib/repo/settings";
 import { resolveCollectionDestination } from "@/lib/repo/destinations";
@@ -21,7 +21,7 @@ import { manualKey, retryKey, scheduledKey } from "@/lib/idempotency";
 import { buildUniqueReference, uniqueReferenceFromBase } from "@/lib/reference";
 import { newId } from "@/lib/ids";
 import { toMinorUnits } from "@/lib/money";
-import { amountForRun } from "@/lib/schedule";
+import { amountForRun, nextRunDate } from "@/lib/schedule";
 
 /**
  * Turn an engine outcome into something a non-technical operator can act on.
@@ -66,9 +66,10 @@ function outcomeMessage(o: CollectOutcome): ActionResult {
  */
 async function collectOrReportUnknown(
   run: () => Promise<CollectOutcome>,
-): Promise<ActionResult> {
+): Promise<ActionResult & { kind?: CollectOutcome["kind"] }> {
   try {
-    return outcomeMessage(await run());
+    const outcome = await run();
+    return { ...outcomeMessage(outcome), kind: outcome.kind };
   } catch (error) {
     console.error("collection failed before an outcome was known", error);
     return {
@@ -198,6 +199,29 @@ export async function executePaymentNowAction(
       actorStaffId: user.id,
     }),
   );
+
+  // Move the schedule on, exactly as the nightly sweep does after its own attempt.
+  //
+  // Without this, collecting today's payment by hand left next_run_date pointing
+  // at the date just collected. The deterministic key means the sweep cannot
+  // double-charge for it, but it would spend the next morning re-attempting a
+  // date already paid, and every screen would keep showing a "next collection"
+  // that had already happened. The schedule then trails a day behind for good.
+  //
+  // Skipped is excluded for the same reason the sweep excludes it: nothing was
+  // attempted, so the date is still owed.
+  if (isScheduledRun && schedule && result.kind && result.kind !== "skipped") {
+    const after = await collectionProgress(db, borrowerId, schedule.id);
+    await setScheduleNextRun(
+      db,
+      schedule.id,
+      nextRunDate(toSpec(schedule), {
+        afterDate: schedule.next_run_date!,
+        paymentsMade: after.paymentsMade,
+        collectedMinor: after.collectedMinor,
+      }),
+    );
+  }
 
   revalidatePath(`/borrowers/${borrowerId}`);
   revalidatePath("/payments");
