@@ -26,6 +26,7 @@ import type { DestinationChoice } from "@/components/destination-picker";
 import { BorrowerSummary } from "@/components/borrower-summary";
 import { PaymentKindTag } from "@/components/payment-kind-tag";
 import { ArchiveBorrowerButton } from "@/components/archive-buttons";
+import { SubmitButton } from "@/components/submit-button";
 import type { RepaymentSchedule } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -217,12 +218,12 @@ export default async function BorrowerProfile({
           <form action={setBorrowerStatusAction}>
             <input type="hidden" name="borrowerId" value={borrower.id} />
             <input type="hidden" name="status" value={paused ? "active" : "paused"} />
-            <button
-              type="submit"
-              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-slate-50"
+            <SubmitButton
+              pendingLabel="Saving…"
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
             >
               {paused ? "Resume collections" : "Pause collections"}
-            </button>
+            </SubmitButton>
           </form>
           {/* Archive, never delete. Refuses while collections could still run,
               because hiding a borrower does not stop taking their money. */}
