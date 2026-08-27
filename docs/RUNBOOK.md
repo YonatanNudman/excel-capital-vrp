@@ -162,9 +162,13 @@ subdomain: `excel-capital.workers.dev`.
     borrowers have no account and Plaid cannot log in. Verified: the dashboard
     302s to `excel-capital-zt.cloudflareaccess.com`, the other two reach the
     Worker.
-  - `EMAIL_FROM=onboarding@resend.dev`, so borrower emails reach the Resend
-    account owner ONLY. Change it once `excelcapital.co.uk` is verified in
-    Resend, or borrowers never receive their setup link.
+  - `EMAIL_FROM=Excel Capital <noreply@excelcapital.co.uk>` since 2026-08-26,
+    when Ido added the DNS records. Verified live: DKIM on
+    `resend._domainkey.excelcapital.co.uk`, SPF and the bounce MX on
+    `send.excelcapital.co.uk`, plus a `p=none` DMARC record.
+    Replaces `onboarding@resend.dev`, which only ever delivered to the Resend
+    account owner. `emailReach()` reports "live" rather than "owner-only" once
+    the sending domain is not resend.dev, so the Settings page reflects this.
 
 ## GitHub Actions (CI and deploys)
 
