@@ -3,7 +3,7 @@ import { getPlaidClient } from "@/lib/plaid";
 import { sha256Hex } from "@/lib/crypto";
 import { getSetupLinkByHash } from "@/lib/repo/setup-links";
 import { getBorrower } from "@/lib/repo/borrowers";
-import { provisionLinkToken } from "@/lib/engine/setup";
+import { provisionLinkToken, reconcilePendingConsents } from "@/lib/engine/setup";
 import { SetupLauncher } from "@/components/setup-launcher";
 
 export const dynamic = "force-dynamic";
@@ -54,6 +54,22 @@ export default async function SetupPage({
   // check: with more than one account, "the consent is authorised" was no longer
   // the same question as "the borrower has finished".
   const plaid = getPlaidClient(env);
+
+  // Ask Plaid what actually happened before deciding what to show.
+  //
+  // On a phone the bank opens in its own tab, and Plaid asks the borrower to
+  // close it and return to the tab that was waiting. If that tab was closed or
+  // the phone suspended it, the result never reaches us and the borrower is left
+  // approved at their bank and pending here. That happened on production.
+  //
+  // Reopening this link now finishes the job on its own.
+  try {
+    await reconcilePendingConsents(db, plaid, env.APP_ENCRYPTION_KEY, borrower.id);
+  } catch (e) {
+    // Never block the page on this: the borrower can still authorise normally.
+    console.error(`consent recheck failed for borrower ${borrower.id}`, e);
+  }
+
   let step: Awaited<ReturnType<typeof provisionLinkToken>> = null;
   let error: string | null = null;
   let done = false;

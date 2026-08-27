@@ -41,6 +41,26 @@ export async function getBorrower(
     .first<Borrower>();
 }
 
+/**
+ * An existing, non-archived borrower with this company number.
+ *
+ * Used to refuse a duplicate at creation. Two identical borrowers appeared on
+ * production 2.8 seconds apart from one operator pressing Create once, and a
+ * duplicate is not harmless here: each carries its own mandate and schedule, so
+ * the same company can end up being collected from twice.
+ */
+export async function findBorrowerByCompanyNumber(
+  db: D1Database,
+  companyNumber: string,
+): Promise<Borrower | null> {
+  return db
+    .prepare(
+      "SELECT * FROM borrowers WHERE company_number = ? AND deleted_at IS NULL ORDER BY created_at LIMIT 1",
+    )
+    .bind(companyNumber)
+    .first<Borrower>();
+}
+
 export async function createBorrower(
   db: D1Database,
   data: {

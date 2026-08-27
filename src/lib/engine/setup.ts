@@ -3,12 +3,14 @@ import { setRecipientPlaidId } from "@/lib/repo/recipients";
 import { listDestinations } from "@/lib/repo/destinations";
 import { destinationLabel } from "@/lib/destinations";
 import {
+  allPendingConsentsForBorrower,
   attachPlaidConsent,
   createPendingConsent,
   setConsentPlaidHash,
   setConsentRecipient,
 } from "@/lib/repo/consents";
 import { getBorrower } from "@/lib/repo/borrowers";
+import { writeAudit } from "@/lib/repo/audit";
 import { encryptString, decryptString, sha256Hex, unprotectString } from "@/lib/crypto";
 import type { Consent, Recipient } from "@/lib/types";
 
@@ -160,4 +162,64 @@ export async function confirmConsent(
 
 function referenceFor(name: string): string {
   return `Excel${name}`.replace(/[^a-zA-Z0-9]/g, "").slice(0, 18);
+}
+
+/**
+ * Ask Plaid which pending mandates are actually authorised, and record them.
+ *
+ * Plaid is the authority, never the Link callback. On a phone the bank opens in
+ * its own tab and Plaid asks the borrower to close it and return to the tab that
+ * was waiting; if that tab was closed or the phone suspended it, the result is
+ * lost and the borrower is left approved at their bank and pending with us. That
+ * happened on production: the bank approved, and nothing was ever recorded.
+ *
+ * So the setup page runs this on every load. Reopening the link is enough to
+ * finish the job, with no dependence on the hand-back working.
+ *
+ * Returns which mandates it confirmed. Retired accounts are included, because
+ * the bank may have made one live while an operator was retiring it, and a live
+ * mandate we stopped tracking is worse than an untidy list.
+ */
+export async function reconcilePendingConsents(
+  db: D1Database,
+  plaid: PlaidClient,
+  encryptionKey: string,
+  borrowerId: string,
+): Promise<{ confirmedIds: string[] }> {
+  const pending = await allPendingConsentsForBorrower(db, borrowerId);
+  const confirmedIds: string[] = [];
+  const nowIso = new Date().toISOString();
+
+  for (const consent of pending) {
+    // Never provisioned with the bank, so there is nothing to confirm yet.
+    if (!consent.plaid_consent_id) continue;
+
+    let status: string;
+    try {
+      ({ status } = await confirmConsent(plaid, encryptionKey, consent));
+    } catch (error) {
+      // A provider blip must not stop the borrower seeing their page. Leave the
+      // mandate pending; the next load asks again.
+      console.error("could not confirm consent with Plaid", consent.id, error);
+      continue;
+    }
+    if (status !== "AUTHORISED" && status !== "AUTHORIZED") continue;
+
+    await db
+      .prepare(
+        "UPDATE consents SET status = 'authorized', authorized_at = ? WHERE id = ? AND status = 'pending'",
+      )
+      .bind(nowIso, consent.id)
+      .run();
+    await writeAudit(db, {
+      actorStaffId: null,
+      action: "consent.authorized",
+      entityType: "borrower",
+      entityId: borrowerId,
+      metadata: { consentId: consent.id, recipientId: consent.recipient_id, via: "setup_page_recheck" },
+    });
+    confirmedIds.push(consent.id);
+  }
+
+  return { confirmedIds };
 }

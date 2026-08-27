@@ -11,6 +11,7 @@ import {
 } from "@/lib/companies-house";
 import {
   createBorrower,
+  findBorrowerByCompanyNumber,
   setBorrowerStatus,
   updateBorrower,
 } from "@/lib/repo/borrowers";
@@ -122,6 +123,19 @@ export async function createBorrowerAction(fd: FormData): Promise<void> {
     }
   } else if (enforce && !companyNumber) {
     throw new Error("A company number is required. Use the search to pick the company.");
+  }
+
+  // Refuse a duplicate. The button disables itself while submitting, but a
+  // retried request or a back button can still run this twice, and two borrowers
+  // for one company is not cosmetic: each carries its own mandate and schedule,
+  // so the same company can end up being collected from twice.
+  if (companyNumber) {
+    const existing = await findBorrowerByCompanyNumber(db, companyNumber);
+    if (existing) {
+      throw new Error(
+        `${existing.legal_name} is already onboarded under company number ${companyNumber}. Open that borrower instead of creating a second one.`,
+      );
+    }
   }
 
   const borrower = await createBorrower(db, {

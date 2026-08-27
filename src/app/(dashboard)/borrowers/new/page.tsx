@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { SubmitButton } from "@/components/submit-button";
 import { createBorrowerAction } from "@/lib/actions/borrowers";
 
 import { WeekdayPicker } from "@/components/weekday-picker";
@@ -164,12 +165,12 @@ export default function NewBorrowerPage() {
           >
             Cancel
           </Link>
-          <button
-            type="submit"
-            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+          <SubmitButton
+            pendingLabel="Creating…"
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
           >
             Create borrower
-          </button>
+          </SubmitButton>
         </div>
       </form>
     </div>
