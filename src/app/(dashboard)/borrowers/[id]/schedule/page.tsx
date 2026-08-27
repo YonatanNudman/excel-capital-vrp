@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { SubmitButton } from "@/components/submit-button";
 import { notFound } from "next/navigation";
 import { getDb } from "@/lib/db";
 import { getBorrower } from "@/lib/repo/borrowers";
@@ -114,9 +115,12 @@ export default async function SchedulePage({
           </label>
         )}
         <div className="flex justify-end">
-          <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700">
+          <SubmitButton
+            pendingLabel="Saving…"
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+          >
             Save schedule
-          </button>
+          </SubmitButton>
         </div>
       </form>
     </div>

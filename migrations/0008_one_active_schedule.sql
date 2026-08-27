@@ -1,0 +1,22 @@
+-- At most one ACTIVE repayment schedule per borrower.
+--
+-- The nightly sweep collects from every row in repayment_schedules where
+-- active = 1. Two active rows for one borrower therefore means two collections
+-- on the same day, and the double-collection guard cannot stop it: the
+-- idempotency key is scheduledKey(borrower, SCHEDULE, dueDate), so two schedules
+-- produce two different keys and both are accepted as legitimate.
+--
+-- upsertSchedule deactivates the old row and inserts the new one inside a single
+-- batch, so it is careful today. This makes the invariant structural rather than
+-- a property of one function remembering to be careful: any future insert that
+-- forgets is rejected by the database instead of quietly doubling someone's
+-- repayments.
+--
+-- Partial index, so the many inactive historical rows per borrower are untouched.
+-- Verified before adding: zero borrowers on staging or production hold more than
+-- one active schedule.
+--
+-- Additive only. No table is renamed, because renaming one makes SQLite rewrite
+-- the foreign key clauses in payments and payment_intents (see migration 0004).
+CREATE UNIQUE INDEX idx_schedules_one_active
+  ON repayment_schedules(borrower_id) WHERE active = 1;
