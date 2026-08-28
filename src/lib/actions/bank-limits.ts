@@ -26,7 +26,13 @@ export interface BankLimitsValues {
   consentPeriod: string;
 }
 export type BankLimitsState =
-  | { errors?: string[]; saved?: boolean; values?: BankLimitsValues }
+  | {
+      errors?: string[];
+      saved?: boolean;
+      /** The change detached the mandate from the bank; the borrower must re-approve. */
+      needsNewLink?: boolean;
+      values?: BankLimitsValues;
+    }
   | null;
 
 /**
@@ -93,13 +99,15 @@ export async function updateBankAndLimitsAction(
   // Update the account this form is actually about, by id, rather than whichever
   // row happens to be newest.
   let recipient = target?.recipient ?? null;
+  let needsNewLink = false;
   if (recipient) {
-    await updateRecipient(db, recipient.id, {
+    const { detachedFromPlaid } = await updateRecipient(db, recipient.id, {
       name: v.recipientName,
       label: recipient.label,
       accountNumber,
       sortCode,
     });
+    needsNewLink ||= detachedFromPlaid;
   } else {
     recipient = await addRecipient(db, borrowerId, {
       name: v.recipientName,
@@ -109,12 +117,13 @@ export async function updateBankAndLimitsAction(
   }
 
   if (consent) {
-    await updateUnauthorisedConsentLimits(db, consent.id, {
+    const { needsReapproval } = await updateUnauthorisedConsentLimits(db, consent.id, {
       maxPaymentAmountMinor: v.maxPaymentAmountMinor,
       periodicMaxAmountMinor: v.periodicMaxAmountMinor,
       period: v.period,
       validTo: v.validTo,
     });
+    needsNewLink ||= needsReapproval;
     // Bind the mandate to this account. Without it the mandate is an orphan: still
     // collectable, but the payment history could not say where money went.
     if (!consent.recipient_id) await setConsentRecipient(db, consent.id, recipient.id);
@@ -137,5 +146,7 @@ export async function updateBankAndLimitsAction(
     entityId: borrowerId,
   });
   revalidatePath(`/borrowers/${borrowerId}`);
-  return { saved: true };
+  // Said plainly, because the alternative is an operator believing a correction
+  // took effect at the bank when the borrower still has to approve it.
+  return { saved: true, needsNewLink };
 }

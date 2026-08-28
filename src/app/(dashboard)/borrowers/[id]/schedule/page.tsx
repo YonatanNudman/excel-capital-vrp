@@ -2,8 +2,9 @@ import Link from "next/link";
 import { SubmitButton } from "@/components/submit-button";
 import { notFound } from "next/navigation";
 import { getDb } from "@/lib/db";
+import { getCurrentUser, hasRole } from "@/lib/auth";
 import { getBorrower } from "@/lib/repo/borrowers";
-import { getActiveSchedule, parseDaysOfWeek } from "@/lib/repo/schedules";
+import { getActiveSchedule, isStoredDaily, parseDaysOfWeek } from "@/lib/repo/schedules";
 import { updateScheduleAction } from "@/lib/actions/borrowers";
 import { fromMinorUnits } from "@/lib/money";
 
@@ -19,6 +20,22 @@ export default async function SchedulePage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  // Operators only, matching the action behind this form. A viewer reaching it
+  // by URL got a form that could only fail on submit.
+  const user = await getCurrentUser();
+  if (!user || !hasRole(user, "operator")) {
+    return (
+      <div className="mx-auto max-w-2xl">
+        <Link href={`/borrowers/${id}`} className="text-sm text-slate-500 hover:underline">
+          ← Back to borrower
+        </Link>
+        <p className="mt-4 rounded-lg border border-slate-200 bg-white p-5 text-sm text-slate-600">
+          You have view-only access, so you cannot change a repayment schedule.
+        </p>
+      </div>
+    );
+  }
+
   const db = getDb();
   const borrower = await getBorrower(db, id);
   if (!borrower) notFound();
@@ -48,7 +65,16 @@ export default async function SchedulePage({
           </label>
           <label className="block">
             <span className="text-sm font-medium text-slate-700">Frequency *</span>
-            <select name="frequency" defaultValue={s?.frequency ?? "monthly"} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm">
+            {/* A daily schedule is stored as custom/1-day (migration 0004), so the
+                raw column says "custom". Defaulting the picker to that meant
+                re-saving a Mon-Fri schedule submitted frequency=custom, the
+                weekday list was discarded, and the borrower started being
+                collected from at weekends. */}
+            <select
+              name="frequency"
+              defaultValue={s ? (isStoredDaily(s) ? "daily" : s.frequency) : "monthly"}
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+            >
               <option value="daily">Daily (choose which days below)</option>
               <option value="weekly">Weekly</option>
               <option value="fortnightly">Fortnightly</option>
@@ -86,6 +112,12 @@ export default async function SchedulePage({
             <input name="endTotal" type="number" step="0.01" defaultValue={s?.end_total_minor ? fromMinorUnits(s.end_total_minor) : ""} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" />
           </label>
         </div>
+        {destinations.length <= 1 && s?.consent_id && (
+          // With one account the picker is not shown, but the form must still
+          // carry the schedule's existing mandate: an absent field posts as
+          // "default account" and quietly unpins it.
+          <input type="hidden" name="destinationConsentId" value={s.consent_id} />
+        )}
         {destinations.length > 1 && (
           // Only offered when there is a real choice. Unlike the one-off picker
           // this lists accounts the borrower has not approved yet, because
@@ -100,11 +132,21 @@ export default async function SchedulePage({
             >
               <option value="">Default account</option>
               {destinations
-                .filter((d) => d.consent && !d.recipient?.archived_at)
+                .filter(
+                  (d) =>
+                    d.consent &&
+                    // The account this schedule ALREADY pays into always appears,
+                    // even if it has since been retired. A <select> whose stored
+                    // value is not among its options silently selects the first
+                    // one, so simply saving the page moved the borrower's
+                    // collections to the default account with nothing said.
+                    (!d.recipient?.archived_at || d.consent.id === s?.consent_id),
+                )
                 .map((d) => (
                   <option key={d.consent!.id} value={d.consent!.id}>
                     {destinationLabel(d)}
                     {d.recipient?.is_default ? " (default)" : ""}
+                    {d.recipient?.archived_at ? " — retired" : ""}
                     {d.consent!.status !== "authorized" ? " — not approved yet" : ""}
                   </option>
                 ))}

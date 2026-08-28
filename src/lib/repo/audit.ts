@@ -29,7 +29,13 @@ export async function writeAudit(
 
 export async function listAudit(
   db: D1Database,
-  opts: { limit?: number; entityType?: string; entityId?: string } = {},
+  opts: {
+    limit?: number;
+    /** Rows to skip, for reading the whole log in pages (the CSV export). */
+    offset?: number;
+    entityType?: string;
+    entityId?: string;
+  } = {},
 ): Promise<AuditEntry[]> {
   const limit = Math.min(opts.limit ?? 200, 500);
   let sql = "SELECT * FROM audit_log";
@@ -38,8 +44,8 @@ export async function listAudit(
     sql += " WHERE entity_type = ? AND entity_id = ?";
     binds.push(opts.entityType, opts.entityId);
   }
-  sql += " ORDER BY created_at DESC LIMIT ?";
-  binds.push(limit);
+  sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
+  binds.push(limit, Math.max(0, opts.offset ?? 0));
   const { results } = await db
     .prepare(sql)
     .bind(...binds)

@@ -154,6 +154,27 @@ async function applyConsentWebhook(
   const status = mapConsentStatus(providerStatus);
   if (!status) return { status: "ignored", reason: `unmapped consent status ${providerStatus}` };
 
+  // Revoked and expired are terminal for a mandate: a bank does not un-cancel
+  // one. Applying whatever a delivery carried meant a late or redelivered
+  // AUTHORISED event could flip a mandate the borrower had cancelled back to
+  // live, and the borrower with it, so collections resumed against an
+  // authorisation that no longer existed. Deliveries are deduped by event id,
+  // which does nothing about ordering. Re-consent is unaffected: it authorises a
+  // NEW consent row, never this one.
+  if (
+    (consent.status === "revoked" || consent.status === "expired") &&
+    status === "authorized"
+  ) {
+    await writeAudit(db, {
+      actorStaffId: null,
+      action: "consent.webhook_ignored",
+      entityType: "consent",
+      entityId: consent.id,
+      metadata: { providerStatus, currentStatus: consent.status, reason: "terminal status" },
+    });
+    return { status: "ignored", reason: `consent already ${consent.status}` };
+  }
+
   const now = new Date().toISOString();
   const statements = [
     db.prepare(

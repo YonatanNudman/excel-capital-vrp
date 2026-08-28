@@ -11,11 +11,25 @@ import { writeAudit, listAudit } from "@/lib/repo/audit";
 import type { Mailer } from "@/lib/mailer";
 import { reconsentEmail } from "@/lib/mailer/templates";
 
+/**
+ * Provider statuses that genuinely end a mandate. Anything else is unknown, and
+ * unknown must never be read as "cancelled".
+ */
+const TERMINAL_PROVIDER_STATUS: Record<string, "expired" | "revoked"> = {
+  EXPIRED: "expired",
+  REVOKED: "revoked",
+  CANCELLED: "revoked",
+  CANCELED: "revoked",
+  REJECTED: "revoked",
+};
+
 export interface ConsentMaintenanceSummary {
   expired: number;
   expiringSoon: number;
   /** Mandates the borrower cancelled at their bank, found by asking Plaid. */
   revokedAtBank: number;
+  /** Mandates the bank described in words we do not recognise. Needs a human. */
+  unknownStatus: number;
 }
 
 const EXPIRING_SOON_DAYS = 7;
@@ -115,6 +129,7 @@ export async function runConsentMaintenance(
   // was only discovered when a collection failed, which is the worst moment and
   // the least clear explanation.
   let revokedAtBank = 0;
+  let unknownStatus = 0;
   if (plaid && encryptionKey) {
     for (const consent of await authorisedConsents(db)) {
       let status: string;
@@ -128,7 +143,28 @@ export async function runConsentMaintenance(
       }
       if (status === "AUTHORISED" || status === "AUTHORIZED") continue;
 
-      const mapped = status === "EXPIRED" ? "expired" : "revoked";
+      // Only statuses we actually recognise as the end of a mandate.
+      //
+      // Anything not AUTHORISED used to be treated as revoked, so one unfamiliar
+      // string from Plaid — a status added to their API, a transient
+      // AWAITING_AUTHORISATION during re-approval, a typo'd wording change —
+      // silently cancelled a live mandate and stopped that borrower's
+      // collections. We cannot un-revoke it afterwards either: revoked is
+      // terminal. An unknown status is a question for a human, not grounds to
+      // stop collecting.
+      const mapped = TERMINAL_PROVIDER_STATUS[status.toUpperCase()];
+      if (!mapped) {
+        console.error("unrecognised consent status from Plaid", consent.id, status);
+        await writeAudit(db, {
+          actorStaffId: null,
+          action: "consent.unknown_provider_status",
+          entityType: "consent",
+          entityId: consent.id,
+          metadata: { borrowerId: consent.borrower_id, providerStatus: status },
+        });
+        unknownStatus++;
+        continue;
+      }
       await setConsentStatus(db, consent.id, mapped);
       // Only finish the borrower if this was their LAST live mandate: with more
       // than one account, one cancellation must not stop the others.
@@ -144,5 +180,5 @@ export async function runConsentMaintenance(
     }
   }
 
-  return { expired: overdue.length, expiringSoon: soon.length, revokedAtBank };
+  return { expired: overdue.length, expiringSoon: soon.length, revokedAtBank, unknownStatus };
 }

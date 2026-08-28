@@ -312,14 +312,21 @@ describe("processWebhook (D1 + mock Plaid)", () => {
 describe("runDueCollections (cron)", () => {
   it("collects a due schedule once, then nothing on a same-day re-run", async () => {
     const { borrower } = await seedBorrower();
-    // Start on the run date so exactly one payment is due (no catch-up).
-    await upsertSchedule(env.DB, borrower.id, {
-      amountMinor: 20000,
-      frequency: "monthly",
-      startDate: "2026-02-01",
-      endMode: "count",
-      endCount: 12,
-    });
+    // Start on the run date so exactly one payment is due (no catch-up). The
+    // schedule is saved AS IF on that day: a schedule saved today never becomes
+    // due for a date already past (see upsertSchedule).
+    await upsertSchedule(
+      env.DB,
+      borrower.id,
+      {
+        amountMinor: 20000,
+        frequency: "monthly",
+        startDate: "2026-02-01",
+        endMode: "count",
+        endCount: 12,
+      },
+      { today: "2026-02-01" },
+    );
     const before = await countPayments();
 
     const r1 = await runDueCollections(env.DB, plaid, KEY, "2026-02-01");
@@ -334,13 +341,18 @@ describe("runDueCollections (cron)", () => {
   it("skips a paused borrower without advancing", async () => {
     const { borrower } = await seedBorrower();
     await setBorrowerStatus(env.DB, borrower.id, "paused");
-    await upsertSchedule(env.DB, borrower.id, {
-      amountMinor: 20000,
-      frequency: "monthly",
-      startDate: "2026-01-01",
-      endMode: "count",
-      endCount: 12,
-    });
+    await upsertSchedule(
+      env.DB,
+      borrower.id,
+      {
+        amountMinor: 20000,
+        frequency: "monthly",
+        startDate: "2026-01-01",
+        endMode: "count",
+        endCount: 12,
+      },
+      { today: "2026-01-01" },
+    );
     const r = await runDueCollections(env.DB, plaid, KEY, "2026-02-01");
     expect(r.skipped).toBeGreaterThanOrEqual(1);
     expect(r.collected).toBe(0);

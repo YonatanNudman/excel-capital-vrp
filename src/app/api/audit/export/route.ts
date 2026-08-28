@@ -7,6 +7,20 @@ import { csvCell as csv } from "@/lib/csv";
 
 export const dynamic = "force-dynamic";
 
+const PAGE = 500;
+/** Upper bound so one request cannot read an unbounded table into memory. */
+const MAX_ROWS = 50_000;
+
+async function readAllAudit(db: D1Database) {
+  const all = [];
+  for (let offset = 0; offset < MAX_ROWS; offset += PAGE) {
+    const page = await listAudit(db, { limit: PAGE, offset });
+    all.push(...page);
+    if (page.length < PAGE) break;
+  }
+  return all;
+}
+
 /** Full export of audit log (any staff role; audited). */
 export async function GET() {
   let user;
@@ -18,10 +32,10 @@ export async function GET() {
   }
   
   const db = getDb();
-  const [entries, staff] = await Promise.all([
-    listAudit(db, { limit: 500 }),
-    listStaff(db),
-  ]);
+  // Every row, in pages: an audit export that silently stops at the newest 500
+  // entries is not an audit trail, and the one time it matters is the one time
+  // nobody can tell it was truncated.
+  const [entries, staff] = await Promise.all([readAllAudit(db), listStaff(db)]);
   const emailById = new Map(staff.map((s) => [s.id, s.email]));
 
   const header = [

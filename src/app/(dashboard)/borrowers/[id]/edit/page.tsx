@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { getCurrentUser, hasRole } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import { getBorrower } from "@/lib/repo/borrowers";
 import { listDestinations } from "@/lib/repo/destinations";
@@ -16,6 +17,29 @@ export default async function EditBorrowerPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+
+  // Operators only. The dashboard layout proves you are STAFF, which includes
+  // read-only viewers, and this page decrypts the destination account number and
+  // sort code and puts them on screen in full. Every other surface masks them and
+  // hides the controls behind an operator check; this one was reachable by URL,
+  // so a viewer could read the raw bank details of every borrower. The actions
+  // behind the forms were guarded, so nothing could be saved -- the leak was the
+  // reading.
+  const user = await getCurrentUser();
+  if (!user || !hasRole(user, "operator")) {
+    return (
+      <div className="mx-auto max-w-2xl">
+        <Link href={`/borrowers/${id}`} className="text-sm text-slate-500 hover:underline">
+          ← Back to borrower
+        </Link>
+        <p className="mt-4 rounded-lg border border-slate-200 bg-white p-5 text-sm text-slate-600">
+          You have view-only access, so you cannot edit a borrower or see their full bank
+          details. Ask an operator if something here needs changing.
+        </p>
+      </div>
+    );
+  }
+
   const db = getDb();
   const borrower = await getBorrower(db, id);
   if (!borrower) notFound();

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { hasRole } from "@/lib/auth";
 import type { Role, StaffUser } from "@/lib/types";
@@ -125,5 +125,44 @@ describe("Companies House enforcement cannot be enforced without a key", () => {
   it("names both switches, so whoever hits it knows which one to change", () => {
     expect(source).toMatch(/COMPANIES_HOUSE_API_KEY/);
     expect(source).toMatch(/COMPANIES_HOUSE_ENFORCE/);
+  });
+});
+
+/**
+ * Pages are the other half of the authorisation model, and they were the half
+ * with a hole: the dashboard layout proves you are STAFF, which includes
+ * read-only viewers, and the borrower edit page decrypted the destination
+ * account number and sort code and rendered them in full. Every other surface
+ * masks them behind an operator check. The forms were guarded, so nothing could
+ * be saved; the leak was the reading.
+ */
+const PAGES_DIR = path.join(__dirname, "..", "src", "app");
+
+function pageFiles(dir: string): string[] {
+  return readdirSync(dir).flatMap((entry) => {
+    const full = path.join(dir, entry);
+    if (statSync(full).isDirectory()) return pageFiles(full);
+    return entry === "page.tsx" ? [full] : [];
+  });
+}
+
+describe("pages that decrypt bank details", () => {
+  it("finds the pages (guards against a silently empty scan)", () => {
+    expect(pageFiles(PAGES_DIR).length).toBeGreaterThan(5);
+  });
+
+  it("check the operator role before rendering them", () => {
+    const unguarded: string[] = [];
+
+    for (const file of pageFiles(PAGES_DIR)) {
+      const source = readFileSync(file, "utf8");
+      if (!/\bunprotectString\s*\(/.test(source)) continue;
+      // Either it proves the role itself, or it only hands the value to a
+      // component that does (the borrower page masks and gates on canOperate).
+      const guarded = /hasRole\(\s*user\s*,\s*"(operator|admin)"\)/.test(source);
+      if (!guarded) unguarded.push(path.relative(path.join(__dirname, ".."), file));
+    }
+
+    expect(unguarded).toEqual([]);
   });
 });

@@ -17,6 +17,15 @@ export interface AutoRetrySummary {
 const MS_PER_HOUR = 3_600_000;
 
 /**
+ * How old a failed payment may be and still be retried automatically.
+ *
+ * Generous enough to cover any sane spacing setting and a long weekend of
+ * provider trouble, short enough that changing the retry limit in Settings
+ * cannot reach back into last quarter's failures and collect them tonight.
+ */
+const MAX_RETRY_AGE_DAYS = 30;
+
+/**
  * Daily auto-retry pass over failed payments. The cron calls this (wiring lives
  * in cron.ts). Every retry runs through collectPayment, the only money-moving
  * path, so all of its guards (paused borrower, unauthorised consent, and the
@@ -51,11 +60,21 @@ export async function runAutoRetries(
   // root has a later created_at, with id as a tie-break so two same-timestamp
   // siblings can never both be selected in one pass (which would double-collect
   // one chain). Correlated NOT EXISTS, bound params only (no value interpolation).
+  // Only recent failures. The retry budget is evaluated live against
+  // settings.default_retry_max, and the query had no date bound, so raising that
+  // setting from 2 to 4 made EVERY failed payment in the database eligible again
+  // on the very next nightly run: months-old failures, long since abandoned or
+  // settled some other way, collected in a batch nobody asked for. A failure
+  // that old is a conversation with the borrower, not something to retry
+  // automatically.
+  const oldestRetryable = new Date(now.getTime() - MAX_RETRY_AGE_DAYS * 86_400_000).toISOString();
+
   const { results } = await db
     .prepare(
       `SELECT p.*
          FROM payments p
         WHERE p.status = 'failed'
+          AND p.created_at >= ?
           AND NOT EXISTS (
             SELECT 1 FROM payments q
              WHERE COALESCE(q.retry_of, q.id) = COALESCE(p.retry_of, p.id)
@@ -64,6 +83,7 @@ export async function runAutoRetries(
           )
         ORDER BY p.created_at ASC`,
     )
+    .bind(oldestRetryable)
     .all<Payment>();
 
   const candidates = results ?? [];

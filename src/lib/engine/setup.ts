@@ -6,6 +6,7 @@ import {
   allPendingConsentsForBorrower,
   attachPlaidConsent,
   createPendingConsent,
+  getConsent,
   setConsentPlaidHash,
   setConsentRecipient,
 } from "@/lib/repo/consents";
@@ -87,16 +88,34 @@ export async function provisionLinkToken(
   let consent = target.consent;
   if (!consent) throw new SetupError("no consent limits configured for borrower");
   if (consent.status === "revoked" || consent.status === "expired") {
+    const replaced = consent;
+    // Carry the end date only if it has not already passed. Copying an elapsed
+    // valid_to produced a replacement mandate that was dead on arrival: the
+    // borrower approved it at their bank and every collection was then skipped
+    // as "consent expired", which is precisely the state re-consent exists to
+    // get them out of. Left open-ended instead, still bounded by the per-payment
+    // and per-period caps, for an operator to set a new term deliberately.
+    const elapsed =
+      replaced.valid_to != null && Date.parse(replaced.valid_to) <= Date.now();
     consent = await createPendingConsent(db, borrowerId, {
       recipientId: recipient.id,
-      currency: consent.currency,
-      maxPaymentAmountMinor: consent.max_payment_amount_minor,
-      period: consent.period,
-      periodicAlignment: consent.periodic_alignment,
-      periodicMaxAmountMinor: consent.periodic_max_amount_minor,
-      validFrom: consent.valid_from,
-      validTo: consent.valid_to,
+      currency: replaced.currency,
+      maxPaymentAmountMinor: replaced.max_payment_amount_minor,
+      period: replaced.period,
+      periodicAlignment: replaced.periodic_alignment,
+      periodicMaxAmountMinor: replaced.periodic_max_amount_minor,
+      validFrom: replaced.valid_from,
+      validTo: elapsed ? null : replaced.valid_to,
     });
+    // Carry the schedule to the replacement mandate.
+    //
+    // A schedule pins the mandate it collects against. Re-consent creates a NEW
+    // mandate row, so a schedule left pointing at the revoked one resolved to a
+    // revoked mandate on every pass and was skipped, for good: the borrower had
+    // re-approved, the money never moved again, and nothing on any screen
+    // explained why. Only the schedule that pointed at the mandate being
+    // replaced, so an operator's explicit choice of a different account stands.
+    await repointSchedulesToReplacementConsent(db, borrowerId, replaced.id, consent.id);
   } else if (!consent.recipient_id) {
     // Legacy row from before mandates recorded their account. Bind it now, so the
     // destination of anything collected against it is knowable.
@@ -122,12 +141,22 @@ export async function provisionLinkToken(
       validTo: consent.valid_to,
     });
     plaintextConsentId = c.consentId;
+    // Two overlapping loads of the setup page can each create a consent at Plaid
+    // before either records one, and the loser used to overwrite the winner:
+    // a live mandate the borrower could approve while we tracked a different id.
+    // attachPlaidConsent refuses to overwrite, so a loser re-reads and uses the
+    // recorded one instead of orphaning it.
     await attachPlaidConsent(db, consent.id, {
       plaidConsentIdEncrypted: await encryptString(c.consentId, encryptionKey),
       plaidConsentIdHash: await sha256Hex(c.consentId),
       plaidRecipientId,
       rawConstraints: c.rawConstraints,
     });
+    const recorded = await getConsent(db, consent.id);
+    if (recorded?.plaid_consent_id) {
+      const winner = await decryptString(recorded.plaid_consent_id, encryptionKey);
+      if (winner !== plaintextConsentId) plaintextConsentId = winner;
+    }
   }
 
   // 4. Fresh Link token
@@ -158,6 +187,21 @@ export async function confirmConsent(
   const plaintext = await decryptString(consent.plaid_consent_id, encryptionKey);
   const r = await plaid.getConsent(plaintext);
   return { status: r.status };
+}
+
+/** Move any active schedule from a superseded mandate onto its replacement. */
+async function repointSchedulesToReplacementConsent(
+  db: D1Database,
+  borrowerId: string,
+  oldConsentId: string,
+  newConsentId: string,
+): Promise<void> {
+  await db
+    .prepare(
+      "UPDATE repayment_schedules SET consent_id = ? WHERE borrower_id = ? AND consent_id = ? AND active = 1",
+    )
+    .bind(newConsentId, borrowerId, oldConsentId)
+    .run();
 }
 
 function referenceFor(name: string): string {

@@ -269,3 +269,39 @@ describe("combinedCeiling: the real risk of this feature", () => {
     expect(combinedCeiling([main, archived])).toBeNull();
   });
 });
+
+describe("choosing where a collection goes when nobody named an account", () => {
+  /**
+   * The silent version of a wrong-destination bug. When the default account's
+   * mandate was pending or revoked, the resolver fell through to "the first
+   * collectable one", so a scheduled collection quietly paid a spare account and
+   * the only record was in a payment history nobody re-reads.
+   */
+  it("refuses when several accounts could receive it and none is the default", () => {
+    const result = resolveDestination([
+      { recipient: recipient({ id: "r1", is_default: 0 }), consent: consent({ id: "c1", status: "authorized", plaid_consent_id: "p1" }) },
+      { recipient: recipient({ id: "r2", is_default: 0 }), consent: consent({ id: "c2", status: "authorized", plaid_consent_id: "p2" }) },
+    ]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/default/i);
+  });
+
+  it("uses the only collectable account without complaint", () => {
+    // Every single-account borrower, and every legacy mandate held without an
+    // account row of its own.
+    const result = resolveDestination([
+      { recipient: null, consent: consent({ id: "c1", status: "authorized", plaid_consent_id: "p1" }) },
+    ]);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.destination.consent?.id).toBe("c1");
+  });
+
+  it("follows the default when there is one", () => {
+    const result = resolveDestination([
+      { recipient: recipient({ id: "r1", is_default: 0 }), consent: consent({ id: "c1", status: "authorized", plaid_consent_id: "p1" }) },
+      { recipient: recipient({ id: "r2", is_default: 1 }), consent: consent({ id: "c2", status: "authorized", plaid_consent_id: "p2" }) },
+    ]);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.destination.consent?.id).toBe("c2");
+  });
+});

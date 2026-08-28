@@ -2,7 +2,7 @@ import type { PlaidClient } from "@/lib/plaid";
 import { getPlaidClient } from "@/lib/plaid";
 import { collectPayment, type CollectInput, type CollectOutcome } from "@/lib/engine/collect";
 import { collectPaymentCoordinated } from "@/lib/durable/coordinated-collect";
-import { dueSchedules, setScheduleNextRun } from "@/lib/repo/schedules";
+import { dueSchedules, lineageOf, setScheduleNextRun } from "@/lib/repo/schedules";
 import { toSpec } from "@/lib/repo/schedules";
 import { getBorrower } from "@/lib/repo/borrowers";
 import { getSettings } from "@/lib/repo/settings";
@@ -16,6 +16,28 @@ import { runAutoRetries } from "@/lib/engine/auto-retry";
 import { reconcilePayments } from "@/lib/engine/reconcile";
 import { getMailer, type Mailer, type MailerEnv } from "@/lib/mailer";
 
+/**
+ * How far behind a due date may be and still be collected automatically.
+ *
+ * Chosen to clear one missed cycle of the longest ordinary frequency (monthly)
+ * while refusing anything that looks like a backlog. Raising it hands the sweep
+ * permission to take more money at once from a borrower who has been unable to
+ * pay, which is exactly the decision that should stay with a person.
+ */
+const MAX_CATCHUP_DAYS = 35;
+
+/** Whole days from `from` to `to`, both YYYY-MM-DD. Negative when `to` is earlier. */
+function daysBetween(from: string, to: string): number {
+  const ms = Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`);
+  return Math.round(ms / 86_400_000);
+}
+
+function yesterdayOf(date: string): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
 export interface CronSummary {
   date: string;
   considered: number;
@@ -25,6 +47,10 @@ export interface CronSummary {
   failed: number;
   unknown: number;
   ended: number;
+  /** Due dates abandoned as too old to collect without a human deciding. */
+  stale: number;
+  /** Schedules whose own processing threw. The rest of the sweep still ran. */
+  errored: number;
 }
 
 /**
@@ -53,6 +79,8 @@ export async function runDueCollections(
     failed: 0,
     unknown: 0,
     ended: 0,
+    stale: 0,
+    errored: 0,
   };
 
   const settings = await getSettings(db);
@@ -60,39 +88,80 @@ export async function runDueCollections(
 
   for (const schedule of due) {
     summary.considered++;
-    const dueDate = schedule.next_run_date!;
-    const borrower = await getBorrower(db, schedule.borrower_id);
-    if (!borrower) {
-      summary.skipped++;
-      continue;
-    }
+    try {
+      const dueDate = schedule.next_run_date!;
+      const borrower = await getBorrower(db, schedule.borrower_id);
+      if (!borrower) {
+        summary.skipped++;
+        continue;
+      }
 
-    const spec = toSpec(schedule);
-    const progress = await collectionProgress(db, schedule.borrower_id, schedule.id);
+      const spec = toSpec(schedule);
+      const progress = await collectionProgress(db, schedule.borrower_id, schedule.id);
 
-    // Ended? Deactivate and stop.
-    if (isEnded(spec, { ...progress, onDate: dueDate })) {
-      await setScheduleNextRun(db, schedule.id, null);
-      summary.ended++;
-      continue;
-    }
+      // Ended? Deactivate and stop.
+      if (isEnded(spec, { ...progress, onDate: dueDate })) {
+        await setScheduleNextRun(db, schedule.id, null);
+        summary.ended++;
+        continue;
+      }
 
-    const amountMinor = amountForRun(spec, progress.collectedMinor);
-    if (amountMinor <= 0) {
-      await setScheduleNextRun(db, schedule.id, null);
-      summary.ended++;
-      continue;
-    }
+      // Too far in the past to collect without a human deciding.
+      //
+      // A skipped collection deliberately leaves next_run_date where it is, so
+      // nothing is forgotten, and a successful one advances by exactly one
+      // interval. Together that means a schedule which has been unable to collect
+      // for months comes back as one full debit per night until it catches up.
+      // A borrower paused over a dispute, or an account retired while a schedule
+      // still pointed at it, would be hit with the entire backlog the moment the
+      // obstruction cleared, with nothing on screen having warned anyone.
+      //
+      // Anything older than this is re-anchored to the next future date and
+      // recorded in the audit trail instead. Arrears are then a decision an
+      // operator makes deliberately (a one-off collection), never something the
+      // sweep does to a borrower overnight.
+      if (daysBetween(dueDate, today) > MAX_CATCHUP_DAYS) {
+        const reanchored = nextRunDate(spec, {
+          afterDate: yesterdayOf(today),
+          paymentsMade: progress.paymentsMade,
+          collectedMinor: progress.collectedMinor,
+        });
+        await setScheduleNextRun(db, schedule.id, reanchored);
+        summary.stale++;
+        await writeAudit(db, {
+          actorStaffId: null,
+          action: "schedule.stale_run_skipped",
+          entityType: "borrower",
+          entityId: schedule.borrower_id,
+          metadata: {
+            scheduleId: schedule.id,
+            skippedDueDate: dueDate,
+            resumedFrom: reanchored,
+            daysOverdue: daysBetween(dueDate, today),
+          },
+        });
+        continue;
+      }
 
-    const idempotencyKey = scheduledKey(schedule.borrower_id, schedule.id, dueDate);
-    const reference = buildUniqueReference(settings.default_reference_format, {
-      borrowerToken: (borrower.company_number || borrower.legal_name || borrower.id)
-        .slice(0, 8)
-        .toUpperCase(),
-      seq: progress.paymentsMade + 1,
-    }, idempotencyKey);
+      const amountMinor = amountForRun(spec, progress.collectedMinor);
+      if (amountMinor <= 0) {
+        await setScheduleNextRun(db, schedule.id, null);
+        summary.ended++;
+        continue;
+      }
 
-    const collectionInput: CollectInput = {
+      // Keyed on the LINEAGE, not the row: editing a schedule inserts a new row,
+      // and a row-keyed idempotency key made this morning's collection invisible
+      // to tonight's sweep for the same due date.
+      const idempotencyKey = scheduledKey(schedule.borrower_id, lineageOf(schedule), dueDate);
+      const reference = buildUniqueReference(settings.default_reference_format, {
+        borrowerToken: (borrower.company_number || borrower.legal_name || borrower.id)
+          .slice(0, 8)
+          .toUpperCase(),
+        seq: progress.paymentsMade + 1,
+      }, idempotencyKey);
+
+      const collectionInput: CollectInput = {
         borrowerId: schedule.borrower_id,
         amountMinor,
         reference,
@@ -105,28 +174,47 @@ export async function runDueCollections(
         scheduledFor: dueDate,
         actorStaffId: null,
       };
-    const outcome = collector
-      ? await collector(collectionInput)
-      : await collectPayment(db, plaid, encryptionKey, collectionInput, mailer);
+      const outcome = collector
+        ? await collector(collectionInput)
+        : await collectPayment(db, plaid, encryptionKey, collectionInput, mailer);
 
-    if (outcome.kind === "skipped") {
-      // e.g. paused / no consent, leave next_run_date so it retries next pass.
-      summary.skipped++;
-      continue;
+      if (outcome.kind === "skipped") {
+        // e.g. paused / no consent, leave next_run_date so it retries next pass.
+        summary.skipped++;
+        continue;
+      }
+      if (outcome.kind === "collected") summary.collected++;
+      else if (outcome.kind === "duplicate") summary.duplicate++;
+      else if (outcome.kind === "failed") summary.failed++;
+      else if (outcome.kind === "unknown") summary.unknown++;
+
+      // Advance to the next due date after this one.
+      const newProgress = await collectionProgress(db, schedule.borrower_id, schedule.id);
+      const next = nextRunDate(spec, {
+        afterDate: dueDate,
+        paymentsMade: newProgress.paymentsMade,
+        collectedMinor: newProgress.collectedMinor,
+      });
+      await setScheduleNextRun(db, schedule.id, next);
+    } catch (error) {
+      // One borrower's problem must not cost every borrower after them in the
+      // list their collection. Every other phase of the nightly run is already
+      // isolated this way; this loop was the exception, so a single throw ended
+      // the night silently, and the only trace was an unexplained short summary.
+      summary.errored++;
+      console.error(`collection failed for schedule ${schedule.id}`, error);
+      await writeAudit(db, {
+        actorStaffId: null,
+        action: "cron.schedule_error",
+        entityType: "borrower",
+        entityId: schedule.borrower_id,
+        metadata: {
+          scheduleId: schedule.id,
+          dueDate: schedule.next_run_date,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
     }
-    if (outcome.kind === "collected") summary.collected++;
-    else if (outcome.kind === "duplicate") summary.duplicate++;
-    else if (outcome.kind === "failed") summary.failed++;
-    else if (outcome.kind === "unknown") summary.unknown++;
-
-    // Advance to the next due date after this one.
-    const newProgress = await collectionProgress(db, schedule.borrower_id, schedule.id);
-    const next = nextRunDate(spec, {
-      afterDate: dueDate,
-      paymentsMade: newProgress.paymentsMade,
-      collectedMinor: newProgress.collectedMinor,
-    });
-    await setScheduleNextRun(db, schedule.id, next);
   }
 
   await writeAudit(db, {
@@ -152,6 +240,8 @@ export async function runDueCollectionsFromEnv(
   today: string,
 ): Promise<
   CronSummary & {
+    /** False when the master switch is off: nothing was collected or retried. */
+    collectionsEnabled: boolean;
     consentExpired: number;
     consentRevokedAtBank: number;
     consentExpiringSoon: number;
@@ -170,30 +260,45 @@ export async function runDueCollectionsFromEnv(
   const maintenance = await phase(env.DB, today, "consent_maintenance", () =>
     runConsentMaintenance(env.DB, now, mailer, plaid, env.APP_ENCRYPTION_KEY),
   );
-  const collections = await phase(env.DB, today, "collections", () =>
-    runDueCollections(
-      env.DB,
-      plaid,
-      env.APP_ENCRYPTION_KEY,
-      today,
-      mailer,
-      (input) => collectPaymentCoordinated(env, input),
-    ),
-  );
+  // The master kill switch, checked HERE as well as inside the coordinator.
+  //
+  // It was enforced in exactly one place on this path: the Durable Object. That
+  // held only because every production caller happens to route through the
+  // coordinator, which is a property of today's call graph, not of the switch. A
+  // stop control worth having must not depend on every future caller remembering
+  // to use the right door. Maintenance and reconciliation still run: they ask the
+  // bank questions and move no money.
+  const collectionsEnabled = String(env.COLLECTIONS_ENABLED) === "true";
+
+  const collections = collectionsEnabled
+    ? await phase(env.DB, today, "collections", () =>
+        runDueCollections(
+          env.DB,
+          plaid,
+          env.APP_ENCRYPTION_KEY,
+          today,
+          mailer,
+          (input) => collectPaymentCoordinated(env, input),
+        ),
+      )
+    : null;
   const reconciliation = await phase(env.DB, today, "reconciliation", () =>
     reconcilePayments(env.DB, plaid, env.APP_ENCRYPTION_KEY, now),
   );
-  const retries = await phase(env.DB, today, "auto_retries", () =>
-    runAutoRetries(
-      env.DB,
-      plaid,
-      env.APP_ENCRYPTION_KEY,
-      now,
-      (input) => collectPaymentCoordinated(env, input),
-    ),
-  );
+  const retries = collectionsEnabled
+    ? await phase(env.DB, today, "auto_retries", () =>
+        runAutoRetries(
+          env.DB,
+          plaid,
+          env.APP_ENCRYPTION_KEY,
+          now,
+          (input) => collectPaymentCoordinated(env, input),
+        ),
+      )
+    : null;
 
   return {
+    collectionsEnabled,
     ...(collections ?? {
       date: today,
       considered: 0,
@@ -203,6 +308,8 @@ export async function runDueCollectionsFromEnv(
       failed: 0,
       unknown: 0,
       ended: 0,
+      stale: 0,
+      errored: 0,
     }),
     consentExpired: maintenance?.expired ?? 0,
     consentRevokedAtBank: maintenance?.revokedAtBank ?? 0,
