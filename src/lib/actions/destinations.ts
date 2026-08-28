@@ -12,6 +12,7 @@ import {
   setDefaultRecipient,
 } from "@/lib/repo/destinations";
 import { createPendingConsent } from "@/lib/repo/consents";
+import { getActiveSchedule } from "@/lib/repo/schedules";
 import { parseBankAndLimits } from "@/lib/borrower-setup-input";
 
 export interface DestinationValues {
@@ -148,6 +149,19 @@ export async function setDefaultDestinationAction(
     metadata: { recipientId },
   });
   revalidatePath(`/borrowers/${borrowerId}`);
+
+  // Only true when the schedule actually follows the default. A schedule pinned
+  // to a specific mandate ignores this entirely, and telling an operator their
+  // collections have moved when they have not is how money ends up somewhere
+  // nobody is watching.
+  const schedule = await getActiveSchedule(db, borrowerId);
+  if (schedule?.consent_id) {
+    return {
+      saved:
+        "Default account changed. The repayment schedule pays into a specific account, so " +
+        "scheduled collections are unaffected: change the schedule if you want them to move too.",
+    };
+  }
   return { saved: "Default account changed. Scheduled collections will now go here." };
 }
 

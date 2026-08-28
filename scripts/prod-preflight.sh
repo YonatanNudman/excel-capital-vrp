@@ -75,11 +75,19 @@ enabled=$(./scripts/read-wrangler-var.py production COLLECTIONS_ENABLED 2>/dev/n
 case $? in
   0)
     if [[ "$enabled" == "false" ]]; then
-      echo "  SAFE  COLLECTIONS_ENABLED=false, so production cannot take money yet."
-      echo "        That is the last thing to change, once everything above is OK."
+      echo "  SAFE  wrangler.jsonc says COLLECTIONS_ENABLED=false: once deployed,"
+      echo "        production cannot take money."
     else
-      echo "  LIVE  COLLECTIONS_ENABLED=$enabled. Production CAN take real money."
+      echo "  LIVE  wrangler.jsonc says COLLECTIONS_ENABLED=$enabled. Once deployed,"
+      echo "        production CAN take real money."
     fi
+    # This file is the INTENT, not the running Worker. Editing it changes
+    # nothing until a deploy, so a reader who takes "SAFE" as a statement about
+    # what is live right now can be badly wrong: the Worker deployed last week
+    # is still collecting tonight whatever this file now says.
+    echo "        This reads the repository file, NOT the deployed Worker. The"
+    echo "        value only takes effect on the next deploy; check the live one"
+    echo "        with: npx wrangler deployments status --env production"
     ;;
   # Never assume "safe" and never assume "live" when the answer is unreadable.
   # An earlier version of this script printed "Production CAN take real money"
