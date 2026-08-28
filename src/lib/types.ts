@@ -114,6 +114,12 @@ export interface RepaymentSchedule {
   next_run_date: string | null;
   /** Which mandate scheduled runs collect against. Null means the default one. */
   consent_id: string | null;
+  /**
+   * The id of the first schedule in this chain, carried forward through every
+   * edit. Progress, end conditions and idempotency keys follow THIS, not `id`,
+   * so editing a schedule cannot reset a loan or reissue a spent payment key.
+   */
+  lineage_id: string | null;
   active: number;
   created_at: string;
 }

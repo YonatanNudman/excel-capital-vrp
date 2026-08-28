@@ -1,5 +1,6 @@
 import type { EndMode, Frequency, RepaymentSchedule } from "@/lib/types";
 import { newId } from "@/lib/ids";
+import { collectionProgress } from "@/lib/repo/payments";
 import {
   nextRunDate,
   type ScheduleSpec,
@@ -43,7 +44,17 @@ function encodeFrequency(input: ScheduleInput): {
     return {
       frequency: input.frequency as Frequency,
       intervalDays: input.intervalDays ?? null,
-      daysOfWeek: null,
+      // Weekly and fortnightly are weekday-aware too (see WEEKDAY_AWARE in
+      // lib/schedule.ts), and the form tells the operator so in as many words:
+      // "For Weekly or Fortnightly: tick the one day you want". Discarding the
+      // choice here meant collections landed on whatever weekday the start date
+      // happened to be, days away from the day they were promised.
+      daysOfWeek:
+        (input.frequency === "weekly" || input.frequency === "fortnightly") &&
+        input.daysOfWeek &&
+        input.daysOfWeek.length > 0
+          ? input.daysOfWeek
+          : null,
     };
   }
   return {
@@ -118,22 +129,55 @@ export async function getActiveSchedule(
     .first<RepaymentSchedule>();
 }
 
-/** Deactivate any existing schedule and insert a new active one. */
+/**
+ * Deactivate any existing schedule and insert a new active one.
+ *
+ * Two properties here exist to stop an edit from taking money it should not.
+ *
+ * FIRST, the new row never becomes due for a date in the past. next_run_date was
+ * computed by walking forward from `startDate` alone, and the edit form
+ * re-submits the ORIGINAL start date, so saving any change to a running schedule
+ * rewound it to the loan's first instalment. The nightly sweep then collected one
+ * backdated instalment per night until it caught up with today: for a borrower
+ * eight months into a weekly loan, roughly thirty further debits of a loan they
+ * had already been paying. `today` is a parameter so a caller replaying a
+ * historical timeline (the tests) can say which day it is.
+ *
+ * SECOND, the loan's progress carries across the edit. Every end condition and
+ * the double-collection key were keyed on the schedule ROW id, which changes on
+ * every save, so an edit reset paymentsMade and collectedMinor to zero and a
+ * finished loan would run its whole term again. lineage_id (migration 0010) is
+ * the id of the first schedule in the chain and is what those now key on.
+ */
 export async function upsertSchedule(
   db: D1Database,
   borrowerId: string,
   input: ScheduleInput,
+  opts: { today?: string } = {},
 ): Promise<RepaymentSchedule> {
   validateSchedule(input);
   const encoded = encodeFrequency(input);
   const spec = toSpec(input);
+
+  const previous = await getActiveSchedule(db, borrowerId);
+  // Read against the PREVIOUS row, which is still active at this point, so the
+  // lineage query resolves; the new row inherits its lineage below.
+  const carried = previous
+    ? await collectionProgress(db, borrowerId, previous.id)
+    : { paymentsMade: 0, collectedMinor: 0 };
+
+  const today = opts.today ?? new Date().toISOString().slice(0, 10);
+  // Never earlier than today: a schedule saved now describes what happens from
+  // now on. A start date in the past is history, not a collection instruction.
+  const afterDate = laterDate(yesterday(input.startDate), yesterday(today));
   const firstRun = nextRunDate(spec, {
-    afterDate: yesterday(input.startDate),
-    paymentsMade: 0,
-    collectedMinor: 0,
+    afterDate,
+    paymentsMade: carried.paymentsMade,
+    collectedMinor: carried.collectedMinor,
   });
 
   const id = newId();
+  const lineageId = previous?.lineage_id ?? previous?.id ?? id;
   await db.batch([
     db.prepare("UPDATE repayment_schedules SET active = 0 WHERE borrower_id = ? AND active = 1")
       .bind(borrowerId),
@@ -141,8 +185,8 @@ export async function upsertSchedule(
       `INSERT INTO repayment_schedules
         (id, borrower_id, consent_id, amount_minor, currency, frequency, interval_days,
          days_of_week, start_date, end_mode, end_date, end_count, end_total_minor,
-         next_run_date, active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+         next_run_date, lineage_id, active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
     )
     .bind(
       id,
@@ -161,6 +205,7 @@ export async function upsertSchedule(
       input.endCount ?? null,
       input.endTotalMinor ?? null,
       firstRun,
+      lineageId,
     ),
   ]);
 
@@ -209,15 +254,36 @@ function isDate(value: string): boolean {
   return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value;
 }
 
+/**
+ * Advance (or end) a schedule after an attempt.
+ *
+ * Guarded on `active = 1` because this sets active back to 1 whenever it is
+ * given a date. The nightly sweep reads its list of due schedules once and
+ * advances each one afterwards, so an operator saving an edit mid-sweep left the
+ * sweep holding a row that had just been superseded: advancing it would have
+ * revived a second active schedule for that borrower, which the partial unique
+ * index (migration 0008) rejects with an error that then aborted the rest of the
+ * night's collections. A superseded row is finished; leave it alone.
+ */
 export async function setScheduleNextRun(
   db: D1Database,
   id: string,
   nextRun: string | null,
 ): Promise<void> {
   await db
-    .prepare("UPDATE repayment_schedules SET next_run_date = ?, active = ? WHERE id = ?")
+    .prepare(
+      "UPDATE repayment_schedules SET next_run_date = ?, active = ? WHERE id = ? AND active = 1",
+    )
     .bind(nextRun, nextRun ? 1 : 0, id)
     .run();
+}
+
+/**
+ * The identity that follows a loan across edits: what progress, end conditions
+ * and idempotency keys must key on, never the row id.
+ */
+export function lineageOf(s: Pick<RepaymentSchedule, "id" | "lineage_id">): string {
+  return s.lineage_id ?? s.id;
 }
 
 /** Schedules whose next_run_date is on or before `onDate` and still active. */
@@ -232,6 +298,11 @@ export async function dueSchedules(
     .bind(onDate)
     .all<RepaymentSchedule>();
   return results ?? [];
+}
+
+/** The later of two YYYY-MM-DD dates, which sort correctly as strings. */
+function laterDate(a: string, b: string): string {
+  return a >= b ? a : b;
 }
 
 function yesterday(date: string): string {

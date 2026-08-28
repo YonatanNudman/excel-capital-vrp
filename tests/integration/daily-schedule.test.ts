@@ -42,14 +42,21 @@ describe("daily schedules round-trip through D1", () => {
 
   it("sets the first run to a selected weekday, not the raw start date", async () => {
     const b = await seedBorrower("Saturday Start Ltd");
-    const created = await upsertSchedule(env.DB, b.id, {
-      amountMinor: 10_000,
-      frequency: "daily",
-      daysOfWeek: [1, 2, 3, 4, 5],
-      startDate: "2026-08-08", // a Saturday
-      endMode: "count",
-      endCount: 5,
-    });
+    // Saved as if on the start date: a schedule saved today is never written
+    // already due for a date in the past (see upsertSchedule).
+    const created = await upsertSchedule(
+      env.DB,
+      b.id,
+      {
+        amountMinor: 10_000,
+        frequency: "daily",
+        daysOfWeek: [1, 2, 3, 4, 5],
+        startDate: "2026-08-08", // a Saturday
+        endMode: "count",
+        endCount: 5,
+      },
+      { today: "2026-08-08" },
+    );
     expect(created.next_run_date).toBe("2026-08-10"); // the Monday
   });
 
@@ -74,14 +81,19 @@ describe("daily schedules round-trip through D1", () => {
 
   it("stores every-day as null rather than a list of all seven", async () => {
     const b = await seedBorrower("Every Day Ltd");
-    const created = await upsertSchedule(env.DB, b.id, {
-      amountMinor: 5_000,
-      frequency: "daily",
-      daysOfWeek: null,
-      startDate: "2026-08-03",
-      endMode: "count",
-      endCount: 10,
-    });
+    const created = await upsertSchedule(
+      env.DB,
+      b.id,
+      {
+        amountMinor: 5_000,
+        frequency: "daily",
+        daysOfWeek: null,
+        startDate: "2026-08-03",
+        endMode: "count",
+        endCount: 10,
+      },
+      { today: "2026-08-03" },
+    );
     // Nothing ticked stores all seven explicitly, which is what makes the row
     // recognisable as daily rather than an ordinary 1-day custom schedule.
     expect(created.days_of_week).toBe("1,2,3,4,5,6,7");
@@ -106,13 +118,18 @@ describe("daily schedules round-trip through D1", () => {
 
   it("leaves the other frequencies untouched by the migration", async () => {
     const b = await seedBorrower("Monthly Ltd");
-    const created = await upsertSchedule(env.DB, b.id, {
-      amountMinor: 75_000,
-      frequency: "monthly",
-      startDate: "2026-08-17",
-      endMode: "count",
-      endCount: 12,
-    });
+    const created = await upsertSchedule(
+      env.DB,
+      b.id,
+      {
+        amountMinor: 75_000,
+        frequency: "monthly",
+        startDate: "2026-08-17",
+        endMode: "count",
+        endCount: 12,
+      },
+      { today: "2026-08-17" },
+    );
     expect(created.frequency).toBe("monthly");
     expect(created.days_of_week).toBeNull();
     expect(created.next_run_date).toBe("2026-08-17");

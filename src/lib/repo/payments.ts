@@ -83,6 +83,14 @@ export async function getPaymentByPlaidId(
     .first<Payment>();
 }
 
+/**
+ * Today's collection for this loan, if one has already been made.
+ *
+ * Matches across the schedule's whole lineage: an edit inserts a new row, and
+ * without this an operator could edit a schedule after the morning's collection
+ * and then take a second payment the same day, because the guard would be
+ * looking for a schedule id that no longer existed when the payment was written.
+ */
 export async function getSchedulePaymentCreatedOn(
   db: D1Database,
   scheduleId: string,
@@ -91,7 +99,7 @@ export async function getSchedulePaymentCreatedOn(
   return db
     .prepare(
       `SELECT * FROM payments
-       WHERE schedule_id = ? AND substr(created_at, 1, 10) = ?
+       WHERE ${LINEAGE_SQL} AND substr(created_at, 1, 10) = ?
          AND status NOT IN ('failed','rejected','cancelled')
        ORDER BY created_at DESC LIMIT 1`,
     )
@@ -333,6 +341,24 @@ export async function paymentSummary(db: D1Database): Promise<PaymentSummary> {
   };
 }
 
+/**
+ * Every schedule row belonging to the same loan as `scheduleId`.
+ *
+ * Editing a schedule inserts a NEW row (upsertSchedule keeps the superseded one
+ * so history survives), so "payments made under this schedule" had to stop
+ * meaning "payments carrying this row's id" or an edit would reset the loan to
+ * zero. lineage_id (migration 0010) is carried forward through every edit.
+ *
+ * Written as a subquery rather than a second round trip so progress stays one
+ * statement: it is read on every collection, for every borrower, every night.
+ */
+const LINEAGE_SQL = `schedule_id IN (
+        SELECT s.id FROM repayment_schedules s
+         WHERE COALESCE(s.lineage_id, s.id) = (
+           SELECT COALESCE(lineage_id, id) FROM repayment_schedules WHERE id = ?
+         )
+      )`;
+
 /** Count succeeded payments and total collected for a borrower (for schedule end logic). */
 export async function collectionProgress(
   db: D1Database,
@@ -344,7 +370,7 @@ export async function collectionProgress(
       `SELECT COUNT(*) AS n, COALESCE(SUM(amount_minor), 0) AS total
        FROM payments
        WHERE borrower_id = ?
-         AND (? IS NULL OR schedule_id = ?)
+         AND (? IS NULL OR ${LINEAGE_SQL})
          AND status IN ('unknown','submitted','initiated','executed','settled')`,
     )
     .bind(borrowerId, scheduleId ?? null, scheduleId ?? null)

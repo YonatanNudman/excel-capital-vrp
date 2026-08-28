@@ -5,7 +5,7 @@ import { getDb, getEnv } from "@/lib/db";
 import { requireRole } from "@/lib/auth";
 import type { CollectOutcome } from "@/lib/engine/collect";
 import { collectPaymentCoordinated } from "@/lib/durable/coordinated-collect";
-import { getActiveSchedule, setScheduleNextRun } from "@/lib/repo/schedules";
+import { getActiveSchedule, lineageOf, setScheduleNextRun } from "@/lib/repo/schedules";
 import { toSpec } from "@/lib/repo/schedules";
 import { getSettings } from "@/lib/repo/settings";
 import { resolveCollectionDestination } from "@/lib/repo/destinations";
@@ -21,7 +21,7 @@ import { manualKey, retryKey, scheduledKey } from "@/lib/idempotency";
 import { buildUniqueReference, uniqueReferenceFromBase } from "@/lib/reference";
 import { newId } from "@/lib/ids";
 import { toMinorUnits } from "@/lib/money";
-import { amountForRun, nextRunDate } from "@/lib/schedule";
+import { amountForRun, isEnded, nextRunDate } from "@/lib/schedule";
 
 /**
  * Turn an engine outcome into something a non-technical operator can act on.
@@ -122,9 +122,21 @@ export async function executePaymentNowAction(
   if (!destination.ok) return { message: destination.reason, tone: "error" };
   const destinationConsentId = destination.destination.consent!.id;
   const today = new Date().toISOString().slice(0, 10);
+  // Collecting the scheduled amount IS a run of that schedule, whether or not the
+  // due date has arrived yet.
+  //
+  // This used to require next_run_date <= today, which is false for most of the
+  // week on any schedule the sweep has already advanced. An early press therefore
+  // fell through to the ad-hoc path: the payment was written with schedule_id
+  // NULL under a random per-render key, so (1) the "today's payment was already
+  // sent" guard could not see it and a second press took the money again, (2) it
+  // counted towards neither the loan total nor the payment count, so the schedule
+  // ran past the agreed end, and (3) the sweep collected the same instalment
+  // again on its due date. Treating it as the instalment it is gives it the
+  // deterministic key, which makes all three impossible.
   const isScheduledRun =
     !(typeof overrideAmount === "string" && overrideAmount.trim()) &&
-    Boolean(schedule?.next_run_date && schedule.next_run_date <= today);
+    Boolean(schedule?.next_run_date);
   if (
     schedule &&
     !(typeof overrideAmount === "string" && overrideAmount.trim()) &&
@@ -150,7 +162,15 @@ export async function executePaymentNowAction(
   } else {
     if (schedule && isScheduledRun) {
       const progress = await collectionProgress(db, borrowerId, schedule.id);
+      // The final instalment of a 'total' loan is a remainder, not the full
+      // amount, and collecting it early must not overshoot the agreed total.
       amountMinor = amountForRun(toSpec(schedule), progress.collectedMinor);
+      if (isEnded(toSpec(schedule), { ...progress, onDate: today })) {
+        return {
+          message: "This loan has already been collected in full. Nothing was charged.",
+          tone: "info",
+        };
+      }
     } else {
       amountMinor = schedule?.amount_minor ?? null;
     }
@@ -163,8 +183,11 @@ export async function executePaymentNowAction(
   const { paymentsMade } = await collectionProgress(db, borrowerId, schedule?.id);
 
   const nonce = String(fd.get("nonce") ?? "") || newId();
+  // Keyed on the schedule's LINEAGE and the date this instalment is FOR, so it
+  // collides with the sweep's own key for that date however many times the
+  // schedule has been edited since.
   const idempotencyKey = isScheduledRun && schedule
-    ? scheduledKey(borrowerId, schedule.id, schedule.next_run_date!)
+    ? scheduledKey(borrowerId, lineageOf(schedule), schedule.next_run_date!)
     : manualKey(borrowerId, nonce);
   const reason = String(fd.get("reason") ?? "").trim();
   const reference = isOneOff && reason
