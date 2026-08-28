@@ -23,8 +23,16 @@ describe("addInterval", () => {
   it("fortnightly adds 14 days", () => {
     expect(addInterval("2026-01-01", { ...base, frequency: "fortnightly" })).toBe("2026-01-15");
   });
-  it("monthly adds one calendar month", () => {
-    expect(addInterval("2026-01-31", { ...base, frequency: "monthly" })).toBe("2026-03-03");
+  it("monthly adds one calendar month, clamped to the month's last day", () => {
+    // This used to assert "2026-03-03", which is what JavaScript's setUTCMonth
+    // does with 31 January and is not one calendar month by any reading: the
+    // borrower's February collection never happened, and every later one moved
+    // to the 3rd. Month-end loans are ordinary, so the clamp is the real rule.
+    expect(addInterval("2026-01-31", { ...base, frequency: "monthly" })).toBe("2026-02-28");
+    expect(addInterval("2026-03-31", { ...base, frequency: "monthly" })).toBe("2026-04-30");
+    expect(addInterval("2026-01-15", { ...base, frequency: "monthly" })).toBe("2026-02-15");
+    // A leap February still gets its 29th.
+    expect(addInterval("2028-01-31", { ...base, frequency: "monthly" })).toBe("2028-02-29");
   });
   it("custom adds intervalDays", () => {
     expect(addInterval("2026-01-01", { ...base, frequency: "custom", intervalDays: 10 })).toBe(

@@ -8,6 +8,24 @@ import { csvCell as csv } from "@/lib/csv";
 
 export const dynamic = "force-dynamic";
 
+const PAGE = 500;
+/**
+ * Upper bound so one request cannot read an unbounded table into memory. Far
+ * above any realistic ledger for this lender, and the export says so in its own
+ * last line if it is ever reached, rather than quietly stopping.
+ */
+const MAX_ROWS = 50_000;
+
+async function readAllPayments(db: D1Database) {
+  const all = [];
+  for (let offset = 0; offset < MAX_ROWS; offset += PAGE) {
+    const page = await listPayments(db, { limit: PAGE, offset });
+    all.push(...page);
+    if (page.length < PAGE) break;
+  }
+  return all;
+}
+
 /** Reconciliation export of all payments (any staff role; audited). */
 export async function GET() {
   let user;
@@ -19,8 +37,15 @@ export async function GET() {
   }
 
   const db = getDb();
+  // Read every row, in pages.
+  //
+  // This is the reconciliation export: staff tick it off against the bank
+  // statement, so a file that silently stops at the newest 500 payments is worse
+  // than no file. The repo caps a single read at 500, which is a sensible cap for
+  // a screen and the wrong one for "export everything", so page until the table
+  // is exhausted.
   const [payments, borrowers] = await Promise.all([
-    listPayments(db, { limit: 500 }),
+    readAllPayments(db),
     listBorrowers(db, {}),
   ]);
   const nameById = new Map(borrowers.map((b) => [b.id, b.legal_name]));

@@ -49,7 +49,23 @@ export async function createSetupToken(): Promise<{ token: string; hash: string 
   return { token, hash };
 }
 
+/**
+ * Shortest key material we will derive an AES key from.
+ *
+ * deriveKey hashes whatever string it is handed, so an unset APP_ENCRYPTION_KEY
+ * used to produce a perfectly valid key from SHA-256(""): bank details were
+ * written to the database "encrypted" under a key anyone can compute, and
+ * nothing failed, warned, or looked any different. Refusing is the only safe
+ * behaviour, because the alternative is discovering it years later.
+ */
+const MIN_KEY_MATERIAL_LENGTH = 16;
+
 async function deriveKey(keyMaterial: string): Promise<CryptoKey> {
+  if (!keyMaterial || keyMaterial.trim().length < MIN_KEY_MATERIAL_LENGTH) {
+    throw new Error(
+      "APP_ENCRYPTION_KEY is missing or too short: bank details cannot be protected",
+    );
+  }
   const digest = await crypto.subtle.digest("SHA-256", ab(new TextEncoder().encode(keyMaterial)));
   return crypto.subtle.importKey("raw", digest, { name: "AES-GCM" }, false, [
     "encrypt",

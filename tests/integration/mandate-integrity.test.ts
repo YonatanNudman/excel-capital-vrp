@@ -21,6 +21,8 @@ import {
 import { getActiveSchedule, upsertSchedule } from "@/lib/repo/schedules";
 import { insertPayment } from "@/lib/repo/payments";
 import { protectString, encryptString, sha256Hex } from "@/lib/crypto";
+import { runConsentMaintenance } from "@/lib/engine/consent-maintenance";
+import type { PlaidClient } from "@/lib/plaid";
 
 const KEY = "test-encryption-key";
 const plaid = new MockPlaidClient();
@@ -297,5 +299,106 @@ describe("raising the automatic retry limit", () => {
 
     expect(attempted).not.toContain(b.id);
     void summary;
+  });
+});
+
+describe("the daily re-check against the bank", () => {
+  it("does not cancel a live mandate over a status it does not recognise", async () => {
+    // Everything that was not AUTHORISED used to be read as revoked, so one
+    // unfamiliar string — a new value in Plaid's API, a transient state during
+    // re-approval — silently cancelled a live mandate and stopped that
+    // borrower's collections. Revoked is terminal, so it could not be undone.
+    const b = await borrower();
+    await setBorrowerStatus(env.DB, b.id, "active");
+    const recipient = await addRecipient(env.DB, b.id, {
+      name: "Excel Capital",
+      accountNumber: await protectString("12345678", KEY),
+      sortCode: await protectString("123456", KEY),
+    });
+    const consent = await createPendingConsent(env.DB, b.id, {
+      recipientId: recipient.id,
+      currency: "GBP",
+      maxPaymentAmountMinor: 50_000,
+    });
+    const plaidConsentId = `mock-consent-unknown-${b.id}`;
+    await env.DB.prepare("UPDATE consents SET plaid_consent_id = ? WHERE id = ?")
+      .bind(await encryptString(plaidConsentId, KEY), consent.id)
+      .run();
+    await setConsentStatus(env.DB, consent.id, "authorized");
+
+    const saying = (status: string) =>
+      ({ getConsent: async () => ({ status }) }) as unknown as PlaidClient;
+
+    const summary = await runConsentMaintenance(
+      env.DB,
+      new Date("2026-08-28T06:00:00Z"),
+      undefined,
+      saying("SOMETHING_NEW_FROM_PLAID"),
+      KEY,
+    );
+
+    expect(summary.unknownStatus).toBeGreaterThanOrEqual(1);
+    expect((await getConsent(env.DB, consent.id))?.status).toBe("authorized");
+    expect((await getBorrower(env.DB, b.id))?.status).toBe("active");
+  });
+
+  it("still cancels one the bank really has revoked", async () => {
+    const b = await borrower();
+    await setBorrowerStatus(env.DB, b.id, "active");
+    const recipient = await addRecipient(env.DB, b.id, {
+      name: "Excel Capital",
+      accountNumber: await protectString("12345678", KEY),
+      sortCode: await protectString("123456", KEY),
+    });
+    const consent = await createPendingConsent(env.DB, b.id, {
+      recipientId: recipient.id,
+      currency: "GBP",
+      maxPaymentAmountMinor: 50_000,
+    });
+    await env.DB.prepare("UPDATE consents SET plaid_consent_id = ? WHERE id = ?")
+      .bind(await encryptString(`mock-consent-rev-${b.id}`, KEY), consent.id)
+      .run();
+    await setConsentStatus(env.DB, consent.id, "authorized");
+
+    await runConsentMaintenance(
+      env.DB,
+      new Date("2026-08-28T06:00:00Z"),
+      undefined,
+      ({ getConsent: async () => ({ status: "REVOKED" }) }) as unknown as PlaidClient,
+      KEY,
+    );
+
+    expect((await getConsent(env.DB, consent.id))?.status).toBe("revoked");
+  });
+});
+
+describe("re-consent after a mandate expires", () => {
+  it("does not copy the elapsed end date onto the replacement", async () => {
+    // The replacement was dead on arrival: the borrower approved it and every
+    // collection was then skipped as "consent expired", which is the exact state
+    // re-consent exists to get them out of.
+    const b = await borrower();
+    const recipient = await addRecipient(env.DB, b.id, {
+      name: "Excel Capital",
+      label: "Main",
+      accountNumber: await protectString("12345678", KEY),
+      sortCode: await protectString("123456", KEY),
+    });
+    const consent = await createPendingConsent(env.DB, b.id, {
+      recipientId: recipient.id,
+      currency: "GBP",
+      maxPaymentAmountMinor: 50_000,
+      periodicMaxAmountMinor: 200_000,
+      period: "MONTH",
+      validTo: "2026-01-01T00:00:00.000Z", // already past
+    });
+    await setConsentStatus(env.DB, consent.id, "expired");
+
+    const step = await provisionLinkToken(env.DB, plaid, KEY, ENV, b.id);
+
+    const replacement = await getConsent(env.DB, step!.consentRowId);
+    expect(replacement?.id).not.toBe(consent.id);
+    expect(replacement?.valid_to).toBeNull();
+    expect(replacement?.max_payment_amount_minor).toBe(50_000);
   });
 });

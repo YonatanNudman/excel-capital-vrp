@@ -766,3 +766,34 @@ Apply in order, then deploy: `0010_schedule_lineage.sql` (schedule identity that
 survives edits) and `0011_backfill_default_recipient.sql` (every borrower gets a
 default payout account; borrowers created through the UI had none, which disabled
 the guard protecting the account collections land in).
+
+### Second pass (the same audit's lower-severity findings)
+
+- **Viewers could read full bank details.** `/borrowers/[id]/edit` decrypted the
+  account number and sort code with no role check — the dashboard layout only
+  proves you are staff, and viewers are staff. The forms were guarded, so nothing
+  could be saved; the leak was the reading. That page, the schedule page and the
+  new-borrower page now require the operator role, and a test fails CI if any
+  page decrypts bank details without one.
+- **A monthly schedule starting on the 29th–31st skipped a month.** Adding a
+  month to 31 January landed on 3 March, so February was never collected and
+  every later collection moved to the 3rd. Month ends are clamped now
+  (31 Jan → 28 Feb, 29 Feb in a leap year).
+- **An unfamiliar status from Plaid cancelled a live mandate.** Anything that was
+  not AUTHORISED was treated as revoked, which is terminal, so one new value in
+  their API would have stopped collections with no way back. Only recognised
+  terminal statuses act now; anything else is audited as
+  `consent.unknown_provider_status` and needs a human.
+- **A collection could quietly go to a non-default account.** When the default's
+  mandate was pending or revoked, the resolver fell through to "the first
+  collectable account". It now refuses and says so, unless there is exactly one
+  account it could mean.
+- **Re-consent of an expired mandate copied the elapsed end date**, so the
+  replacement was dead on arrival. The replacement is open-ended; set a new term
+  deliberately if you want one.
+- **The "full" CSV exports stopped at the newest 500 rows.** Both now page
+  through everything (hard cap 50,000).
+- **A missing `APP_ENCRYPTION_KEY` derived a working key from the empty string**,
+  so bank details would have been written "encrypted" under a key anyone can
+  compute, with nothing failing. Key material shorter than 16 characters is now
+  refused outright.

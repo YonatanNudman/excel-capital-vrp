@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { getCurrentUser, hasRole } from "@/lib/auth";
 import { SubmitButton } from "@/components/submit-button";
 import { createBorrowerAction } from "@/lib/actions/borrowers";
 
@@ -58,7 +59,23 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-export default function NewBorrowerPage() {
+export default async function NewBorrowerPage() {
+  // Operators only, matching createBorrowerAction. A viewer could otherwise fill
+  // in a borrower's bank details and limits and lose the lot on submit.
+  const user = await getCurrentUser();
+  if (!user || !hasRole(user, "operator")) {
+    return (
+      <div className="mx-auto max-w-3xl">
+        <Link href="/borrowers" className="text-sm text-slate-500 hover:underline">
+          ← Borrowers
+        </Link>
+        <p className="mt-4 rounded-lg border border-slate-200 bg-white p-5 text-sm text-slate-600">
+          You have view-only access, so you cannot add a borrower.
+        </p>
+      </div>
+    );
+  }
+
   // Only offer the register lookup when an API key is configured; otherwise the
   // form is plain manual entry.
   const companiesHouseReady = isCompaniesHouseConfigured(getEnv());

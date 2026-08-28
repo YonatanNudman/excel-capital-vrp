@@ -107,8 +107,26 @@ export function resolveDestination(
     };
   }
 
-  const preferred = collectable.find((d) => d.recipient?.is_default) ?? collectable[0];
-  return { ok: true, destination: preferred };
+  const preferred = collectable.find((d) => d.recipient?.is_default);
+  if (preferred) return { ok: true, destination: preferred };
+
+  // One collectable account and no default marked: unambiguous, so use it. This
+  // is every single-account borrower, and every legacy mandate held without an
+  // account row of its own.
+  if (collectable.length === 1) return { ok: true, destination: collectable[0] };
+
+  // Several accounts could receive the money and none of them is the default.
+  // Picking the first was a silent decision about where a borrower's repayments
+  // land, made by list order: when the default's mandate was pending or revoked,
+  // scheduled collections quietly went to a spare account instead, and the only
+  // record was in the payment history nobody re-reads. A refusal an operator can
+  // see and fix is the better failure.
+  return {
+    ok: false,
+    reason:
+      "More than one account could receive this, and none is set as the default. " +
+      "Choose the account, or make one the default first.",
+  };
 }
 
 /**

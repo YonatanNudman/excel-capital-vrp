@@ -101,9 +101,21 @@ export function addInterval(date: string, spec: ScheduleSpec): string {
     case "fortnightly":
       d.setUTCDate(d.getUTCDate() + 14);
       break;
-    case "monthly":
+    case "monthly": {
+      // Clamp to the last day of the target month rather than letting JavaScript
+      // overflow. setUTCMonth on the 31st of January lands on 3 March: the
+      // borrower's February collection never happens at all, and every later one
+      // is on the 3rd. Month-end schedules are ordinary in lending, so this is
+      // not an edge case, it is the last working day of the month.
+      const day = d.getUTCDate();
+      d.setUTCDate(1);
       d.setUTCMonth(d.getUTCMonth() + 1);
+      const lastOfMonth = new Date(
+        Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0),
+      ).getUTCDate();
+      d.setUTCDate(Math.min(day, lastOfMonth));
       break;
+    }
     case "custom": {
       const days = spec.intervalDays;
       if (!days || days < 1) throw new Error("custom frequency requires intervalDays >= 1");

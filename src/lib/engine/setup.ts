@@ -89,6 +89,14 @@ export async function provisionLinkToken(
   if (!consent) throw new SetupError("no consent limits configured for borrower");
   if (consent.status === "revoked" || consent.status === "expired") {
     const replaced = consent;
+    // Carry the end date only if it has not already passed. Copying an elapsed
+    // valid_to produced a replacement mandate that was dead on arrival: the
+    // borrower approved it at their bank and every collection was then skipped
+    // as "consent expired", which is precisely the state re-consent exists to
+    // get them out of. Left open-ended instead, still bounded by the per-payment
+    // and per-period caps, for an operator to set a new term deliberately.
+    const elapsed =
+      replaced.valid_to != null && Date.parse(replaced.valid_to) <= Date.now();
     consent = await createPendingConsent(db, borrowerId, {
       recipientId: recipient.id,
       currency: replaced.currency,
@@ -97,7 +105,7 @@ export async function provisionLinkToken(
       periodicAlignment: replaced.periodic_alignment,
       periodicMaxAmountMinor: replaced.periodic_max_amount_minor,
       validFrom: replaced.valid_from,
-      validTo: replaced.valid_to,
+      validTo: elapsed ? null : replaced.valid_to,
     });
     // Carry the schedule to the replacement mandate.
     //

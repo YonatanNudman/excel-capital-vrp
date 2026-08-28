@@ -265,6 +265,8 @@ export async function listPayments(
     from?: string | null;
     to?: string | null;
     limit?: number;
+    /** Rows to skip, for reading the whole table in pages (the CSV export). */
+    offset?: number;
   } = {},
 ): Promise<Payment[]> {
   let sql = "SELECT * FROM payments";
@@ -292,8 +294,8 @@ export async function listPayments(
     binds.push(opts.to);
   }
   if (where.length > 0) sql += " WHERE " + where.join(" AND ");
-  sql += " ORDER BY created_at DESC LIMIT ?";
-  binds.push(Math.min(opts.limit ?? 200, 500));
+  sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
+  binds.push(Math.min(opts.limit ?? 200, 500), Math.max(0, opts.offset ?? 0));
   const { results } = await db
     .prepare(sql)
     .bind(...binds)

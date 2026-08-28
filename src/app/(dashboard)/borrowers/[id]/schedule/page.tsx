@@ -2,6 +2,7 @@ import Link from "next/link";
 import { SubmitButton } from "@/components/submit-button";
 import { notFound } from "next/navigation";
 import { getDb } from "@/lib/db";
+import { getCurrentUser, hasRole } from "@/lib/auth";
 import { getBorrower } from "@/lib/repo/borrowers";
 import { getActiveSchedule, isStoredDaily, parseDaysOfWeek } from "@/lib/repo/schedules";
 import { updateScheduleAction } from "@/lib/actions/borrowers";
@@ -19,6 +20,22 @@ export default async function SchedulePage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  // Operators only, matching the action behind this form. A viewer reaching it
+  // by URL got a form that could only fail on submit.
+  const user = await getCurrentUser();
+  if (!user || !hasRole(user, "operator")) {
+    return (
+      <div className="mx-auto max-w-2xl">
+        <Link href={`/borrowers/${id}`} className="text-sm text-slate-500 hover:underline">
+          ← Back to borrower
+        </Link>
+        <p className="mt-4 rounded-lg border border-slate-200 bg-white p-5 text-sm text-slate-600">
+          You have view-only access, so you cannot change a repayment schedule.
+        </p>
+      </div>
+    );
+  }
+
   const db = getDb();
   const borrower = await getBorrower(db, id);
   if (!borrower) notFound();
