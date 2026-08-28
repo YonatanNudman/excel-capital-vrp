@@ -9,7 +9,7 @@ import {
   setConsentPlaidHash,
   setConsentRecipient,
 } from "@/lib/repo/consents";
-import { getBorrower } from "@/lib/repo/borrowers";
+import { activateBorrowerOnLiveMandate, getBorrower } from "@/lib/repo/borrowers";
 import { writeAudit } from "@/lib/repo/audit";
 import { encryptString, decryptString, sha256Hex, unprotectString } from "@/lib/crypto";
 import type { Consent, Recipient } from "@/lib/types";
@@ -219,6 +219,14 @@ export async function reconcilePendingConsents(
       metadata: { consentId: consent.id, recipientId: consent.recipient_id, via: "setup_page_recheck" },
     });
     confirmedIds.push(consent.id);
+  }
+
+  // The status has to move here too, not only in the Link callback. This path
+  // exists BECAUSE the callback is unreliable on a phone, so leaving the flip to
+  // the callback left borrowers with a live mandate reading "Onboarding" forever
+  // while being collected from every cycle.
+  if (confirmedIds.length > 0) {
+    await activateBorrowerOnLiveMandate(db, borrowerId);
   }
 
   return { confirmedIds };

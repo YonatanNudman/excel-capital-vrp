@@ -18,6 +18,7 @@ import {
 } from "@/components/action-buttons";
 import { formatMinor } from "@/lib/money";
 import { destinationsReadiness } from "@/lib/readiness";
+import { setupProgress } from "@/lib/setup-progress";
 import { loanProgress, paymentKind } from "@/lib/loan-progress";
 import { listDestinations } from "@/lib/repo/destinations";
 import { blockedReason, combinedCeiling, destinationLabel } from "@/lib/destinations";
@@ -105,6 +106,9 @@ export default async function BorrowerProfile({
   const readiness = destinationsReadiness(
     destinations.map((d) => ({ label: destinationLabel(d), recipient: d.recipient, consent: d.consent })),
   );
+  // Whether the borrower still owes us anything, across every account rather
+  // than the one primary mandate the summary used to read.
+  const setup = setupProgress(destinations);
   const env = getEnv();
   // Decrypt and mask every destination here, on the server. The panel and the
   // picker are client components, so they must never receive account numbers.
@@ -176,8 +180,23 @@ export default async function BorrowerProfile({
         schedule={schedule}
         progress={progress}
         latestLink={latestLink}
-        consentAuthorised={consent?.status === "authorized"}
+        setup={setup}
       />
+
+      {canOperate && readiness.ready && setup.awaitingBorrower > 0 && (
+        // Named here as well as in the summary tile, because this is the state
+        // staff act on: everything on our side is done and the borrower has not
+        // finished. Only shown when there is nothing left for staff to fix, so it
+        // never competes with the amber "not ready to send" banner below.
+        <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4">
+          <h2 className="text-sm font-semibold text-amber-900">Waiting on the borrower</h2>
+          <p className="mt-1 text-sm text-amber-900">{setup.detail}</p>
+          <p className="mt-1 text-sm text-amber-900">
+            They finish this by opening their setup link and approving with their bank. Send a new
+            link with &ldquo;Setup link&rdquo; above if the last one has expired.
+          </p>
+        </div>
+      )}
 
       {canOperate && !readiness.ready && (
         <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4">

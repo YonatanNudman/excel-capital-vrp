@@ -215,6 +215,50 @@ export async function archiveBlockers(
 }
 
 /**
+ * Promote a borrower to active the moment one of their mandates is live.
+ *
+ * "Onboarding" is meant to say "the borrower cannot be collected from yet", but
+ * nothing enforced that: the status was only ever flipped in two of the three
+ * places a mandate can become authorised. The Link callback did it, the Plaid
+ * webhook did it, and the setup page's own recheck (reconcilePendingConsents,
+ * added precisely because the callback often never arrives on a phone) did not.
+ * A borrower who finished that way held a live mandate, was collected from every
+ * cycle — collectPayment only skips paused, revoked and expired — and still read
+ * "Onboarding" on the list. Staff had no way to tell that apart from a borrower
+ * who had genuinely done nothing.
+ *
+ * Written as one statement so the guard cannot be raced by two callers, and
+ * deliberately narrow:
+ *
+ *   - `paused` is untouched. Pause is an operator's decision to stop collecting
+ *     and no automatic path may undo it. This is the same rule as
+ *     syncBorrowerStatusToMandates, which the webhook previously bypassed with a
+ *     bare UPDATE that silently resumed a paused borrower.
+ *   - `revoked` and `expired` are cleared, because a fresh mandate after a
+ *     re-consent is exactly the case where the old flag is stale.
+ *   - It requires a live mandate to exist, so it can never mark a borrower
+ *     collectable that no bank has approved.
+ */
+export async function activateBorrowerOnLiveMandate(
+  db: D1Database,
+  borrowerId: string,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE borrowers
+          SET status = 'active'
+        WHERE id = ?
+          AND status IN ('onboarding', 'revoked', 'expired')
+          AND EXISTS (
+            SELECT 1 FROM consents
+             WHERE borrower_id = borrowers.id AND status = 'authorized'
+          )`,
+    )
+    .bind(borrowerId)
+    .run();
+}
+
+/**
  * Set the borrower's status from the mandates they actually still have.
  *
  * Since a borrower can hold several mandates, one per payout account, a single

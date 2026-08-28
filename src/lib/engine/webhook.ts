@@ -4,7 +4,11 @@ import { failureEmail, receiptEmail } from "@/lib/mailer/templates";
 import { mapPlaidStatus } from "@/lib/payment-state";
 import type { PlaidClient } from "@/lib/plaid";
 import { writeAudit } from "@/lib/repo/audit";
-import { getBorrower, syncBorrowerStatusToMandates } from "@/lib/repo/borrowers";
+import {
+  activateBorrowerOnLiveMandate,
+  getBorrower,
+  syncBorrowerStatusToMandates,
+} from "@/lib/repo/borrowers";
 import {
   getConsentByPlaidHash,
   listConsentsMissingPlaidHash,
@@ -158,11 +162,14 @@ async function applyConsentWebhook(
        WHERE id = ?`,
     ).bind(status, status, now, consent.id),
   ];
-  if (status === "authorized") {
-    statements.push(db.prepare("UPDATE borrowers SET status = 'active' WHERE id = ?")
-      .bind(consent.borrower_id));
-  }
   await db.batch(statements);
+
+  // Via the shared guard rather than a bare UPDATE. The bare one set every
+  // borrower active, including a PAUSED one: authorising a spare account then
+  // silently resumed collections an operator had deliberately stopped.
+  if (status === "authorized") {
+    await activateBorrowerOnLiveMandate(db, consent.borrower_id);
+  }
 
   // Revoking or expiring ONE mandate does not finish the borrower: they may hold
   // another live one for a different payout account. Decide from what is left
