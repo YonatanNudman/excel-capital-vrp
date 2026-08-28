@@ -693,3 +693,76 @@ that used to leave it behind). Apply the migration to each environment
 (`npm run db:migrate:staging`, `npm run db:migrate:prod`) to repair rows already
 written. It only moves `onboarding` rows that hold an authorised mandate;
 paused, revoked and expired rows are left alone.
+
+## Collection safety rails (added after the 2026-08-28 audit)
+
+An audit of every money-moving path found several defects that could take money
+twice, take it after a stop, or send it to a superseded account. The fixes
+change what staff should expect on screen, so they are listed here.
+
+### Editing a repayment schedule
+
+- Saving a schedule **never makes it due for a date before the day you saved it**.
+  Previously the form re-submitted the loan's original start date and the
+  schedule rewound to the first instalment, collecting one backdated payment per
+  night until it caught up. Entering a loan with a real (past) start date is safe
+  for the same reason.
+- **Progress carries across the edit.** "After N payments" and "until a total is
+  collected" count what the loan has already taken, not what the current schedule
+  row has. Migration `0010_schedule_lineage.sql` is what makes that work; apply
+  it before deploying.
+- Editing after the morning's collection cannot produce a second collection the
+  same day.
+- The frequency box now shows **Daily** for a daily schedule (it is stored as
+  `custom`/1-day). Re-saving no longer converts a Mon-Fri schedule to every day
+  including weekends.
+- The weekday you tick for **Weekly** or **Fortnightly** is now honoured.
+
+### Collecting early with "Execute payment now"
+
+Pressing it without entering an amount collects **the next instalment**, whether
+or not its due date has arrived. The schedule then advances, the payment counts
+towards the loan, and the sweep will not collect that instalment again. To take
+something that is NOT an instalment (a late fee, a part payment), enter an
+amount — that remains an ad-hoc collection and is deliberately not deduped.
+
+### Long-overdue schedules are not collected in a batch
+
+If a schedule falls more than **35 days** behind (a long pause, an account
+retired under it, a mandate that needed re-approving), the sweep re-anchors it to
+the current cycle and writes `schedule.stale_run_skipped` to the audit log
+instead of collecting the backlog one full debit per night. Arrears are then a
+deliberate decision: collect them with a one-off payment. Change the window in
+`MAX_CATCHUP_DAYS` (`src/lib/engine/cron.ts`) if the business wants different.
+
+### Correcting bank details or limits after a link has been opened
+
+Plaid registers the account and fixes the mandate's limits when the setup page is
+first opened, before the borrower approves anything. So changing the account
+number, sort code, or the limits **detaches the mandate**: the form says so, and
+the borrower must approve a new one. Until they do, nothing can be collected.
+Details of an **authorised** mandate cannot be changed at all — that is the
+borrower's agreement with their bank.
+
+### Things the system now refuses
+
+- Retiring an account that the active repayment schedule pays into. Point the
+  schedule elsewhere first; retiring it used to stop repayments silently.
+- Reviving a cancelled mandate from a late or redelivered Plaid webhook.
+- Automatic retries of failures older than 30 days, so raising the retry limit in
+  Settings cannot reach back into old failures.
+
+### The master switch
+
+`COLLECTIONS_ENABLED=false` is now checked at the nightly entry point as well as
+inside the Durable Object, so the sweep collects and retries nothing while it is
+off (consent maintenance and reconciliation still run — they move no money).
+`tests/collection-entry-points.test.ts` fails CI if a new caller reaches
+`collectPayment` without going through the coordinator.
+
+### Migrations from this work
+
+Apply in order, then deploy: `0010_schedule_lineage.sql` (schedule identity that
+survives edits) and `0011_backfill_default_recipient.sql` (every borrower gets a
+default payout account; borrowers created through the UI had none, which disabled
+the guard protecting the account collections land in).

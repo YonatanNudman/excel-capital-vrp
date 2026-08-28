@@ -240,6 +240,8 @@ export async function runDueCollectionsFromEnv(
   today: string,
 ): Promise<
   CronSummary & {
+    /** False when the master switch is off: nothing was collected or retried. */
+    collectionsEnabled: boolean;
     consentExpired: number;
     consentRevokedAtBank: number;
     consentExpiringSoon: number;
@@ -258,30 +260,45 @@ export async function runDueCollectionsFromEnv(
   const maintenance = await phase(env.DB, today, "consent_maintenance", () =>
     runConsentMaintenance(env.DB, now, mailer, plaid, env.APP_ENCRYPTION_KEY),
   );
-  const collections = await phase(env.DB, today, "collections", () =>
-    runDueCollections(
-      env.DB,
-      plaid,
-      env.APP_ENCRYPTION_KEY,
-      today,
-      mailer,
-      (input) => collectPaymentCoordinated(env, input),
-    ),
-  );
+  // The master kill switch, checked HERE as well as inside the coordinator.
+  //
+  // It was enforced in exactly one place on this path: the Durable Object. That
+  // held only because every production caller happens to route through the
+  // coordinator, which is a property of today's call graph, not of the switch. A
+  // stop control worth having must not depend on every future caller remembering
+  // to use the right door. Maintenance and reconciliation still run: they ask the
+  // bank questions and move no money.
+  const collectionsEnabled = String(env.COLLECTIONS_ENABLED) === "true";
+
+  const collections = collectionsEnabled
+    ? await phase(env.DB, today, "collections", () =>
+        runDueCollections(
+          env.DB,
+          plaid,
+          env.APP_ENCRYPTION_KEY,
+          today,
+          mailer,
+          (input) => collectPaymentCoordinated(env, input),
+        ),
+      )
+    : null;
   const reconciliation = await phase(env.DB, today, "reconciliation", () =>
     reconcilePayments(env.DB, plaid, env.APP_ENCRYPTION_KEY, now),
   );
-  const retries = await phase(env.DB, today, "auto_retries", () =>
-    runAutoRetries(
-      env.DB,
-      plaid,
-      env.APP_ENCRYPTION_KEY,
-      now,
-      (input) => collectPaymentCoordinated(env, input),
-    ),
-  );
+  const retries = collectionsEnabled
+    ? await phase(env.DB, today, "auto_retries", () =>
+        runAutoRetries(
+          env.DB,
+          plaid,
+          env.APP_ENCRYPTION_KEY,
+          now,
+          (input) => collectPaymentCoordinated(env, input),
+        ),
+      )
+    : null;
 
   return {
+    collectionsEnabled,
     ...(collections ?? {
       date: today,
       considered: 0,
