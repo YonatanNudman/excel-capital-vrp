@@ -38,9 +38,16 @@ export async function upsertRecipient(
     return (await getRecipient(db, borrowerId))!;
   }
   const id = newId();
+  // is_default = 1, because this is the borrower's FIRST account and every guard
+  // that protects the account collections actually use is written in terms of the
+  // default. Omitting it left every borrower onboarded through the UI with no
+  // default at all: the "you cannot retire the default account" refusal could
+  // never fire, and the panel showed no account as the one being collected into.
+  // addRecipient already does this for accounts added later.
   await db
     .prepare(
-      "INSERT INTO recipients (id, borrower_id, name, account_number, sort_code) VALUES (?, ?, ?, ?, ?)",
+      `INSERT INTO recipients (id, borrower_id, name, account_number, sort_code, is_default)
+       VALUES (?, ?, ?, ?, ?, 1)`,
     )
     .bind(id, borrowerId, data.name, data.accountNumber ?? null, data.sortCode ?? null)
     .run();

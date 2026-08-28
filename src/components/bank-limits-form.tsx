@@ -166,12 +166,25 @@ export function BankLimitsForm({
           ))}
         </ul>
       )}
-      {state?.saved && (
+      {state?.saved && !state.needsNewLink && (
         <p
           role="status"
           className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900"
         >
           ✓ Saved. This borrower is ready for a setup link now.
+        </p>
+      )}
+      {state?.saved && state.needsNewLink && (
+        // A correction the borrower has to re-approve is NOT the same outcome as
+        // a plain save, and saying so is the difference between an operator
+        // knowing the mandate is stale and believing the fix has taken effect.
+        <p
+          role="status"
+          className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+        >
+          ✓ Saved. These details had already been sent to the bank, so the old mandate no longer
+          applies. Send the borrower a new setup link and ask them to approve it again, otherwise
+          nothing can be collected.
         </p>
       )}
 

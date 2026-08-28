@@ -210,7 +210,25 @@ export async function addRecipient(
   return (await getRecipientById(db, id))!;
 }
 
-/** Rename or re-bank an account. Refuses once a mandate has been authorised. */
+/**
+ * Rename or re-bank an account. Refuses once a mandate has been authorised.
+ *
+ * Changing the bank details also DETACHES the account from Plaid, and this is
+ * the whole point of the function rather than a detail.
+ *
+ * Plaid registers a recipient once, from the sort code and account number we
+ * hand it, and the mandate the borrower approves is bound to that registration.
+ * provisionLinkToken reuses a stored plaid_recipient_id unconditionally, so a
+ * corrected account number never reached Plaid: an operator who fixed a typo,
+ * resent the link and watched the borrower approve it had created a mandate that
+ * pays the OLD account, while every screen here showed the corrected one. Money
+ * would have arrived somewhere nobody could see.
+ *
+ * Clearing the id makes the next provisioning register the corrected account and
+ * mint a fresh mandate for the borrower to approve. Callers must refuse the edit
+ * outright once a mandate is authorised: those details are fixed at the bank and
+ * cannot be corrected here at all.
+ */
 export async function updateRecipient(
   db: D1Database,
   recipientId: string,
@@ -220,12 +238,22 @@ export async function updateRecipient(
     accountNumber?: string | null;
     sortCode?: string | null;
   },
-): Promise<void> {
+): Promise<{ detachedFromPlaid: boolean }> {
+  const before = await getRecipientById(db, recipientId);
+  // Compare ciphertext deliberately: encryption is randomised, so equal values
+  // produce different ciphertext and this errs towards re-registering. A needless
+  // re-registration costs the borrower one approval; a missed one sends their
+  // repayments to an account that is no longer on file.
+  const changed =
+    (data.accountNumber != null && data.accountNumber !== before?.account_number) ||
+    (data.sortCode != null && data.sortCode !== before?.sort_code);
+
   await db
     .prepare(
       `UPDATE recipients SET name = ?, label = ?,
          account_number = COALESCE(?, account_number),
-         sort_code = COALESCE(?, sort_code)
+         sort_code = COALESCE(?, sort_code),
+         plaid_recipient_id = CASE WHEN ? THEN NULL ELSE plaid_recipient_id END
        WHERE id = ?`,
     )
     .bind(
@@ -233,9 +261,26 @@ export async function updateRecipient(
       data.label?.trim() || null,
       data.accountNumber ?? null,
       data.sortCode ?? null,
+      changed ? 1 : 0,
       recipientId,
     )
     .run();
+
+  if (changed) {
+    // The mandate is bound to the old registration, so it cannot be reused
+    // either. Only unapproved ones: an authorised mandate is the borrower's
+    // agreement with their bank and is never rewritten from here.
+    await db
+      .prepare(
+        `UPDATE consents
+            SET plaid_consent_id = NULL, plaid_consent_id_hash = NULL, plaid_recipient_id = NULL
+          WHERE recipient_id = ? AND status <> 'authorized'`,
+      )
+      .bind(recipientId)
+      .run();
+  }
+
+  return { detachedFromPlaid: changed };
 }
 
 /**
@@ -297,6 +342,28 @@ export async function archiveRecipient(
     return {
       ok: false,
       reason: "This is the default account. Make another account the default first.",
+    };
+  }
+
+  // An active schedule pinned to this account is the case the default check
+  // misses. Retiring it does not stop the schedule: every night the sweep
+  // resolves its mandate, finds the account retired, skips without advancing,
+  // and tries again tomorrow. The borrower's repayments stop dead, and nothing
+  // says so on any screen. Refuse, and name the fix.
+  const pinned = await db
+    .prepare(
+      `SELECT COUNT(*) AS n
+         FROM repayment_schedules s
+         JOIN consents c ON c.id = s.consent_id
+        WHERE s.borrower_id = ? AND s.active = 1 AND c.recipient_id = ?`,
+    )
+    .bind(borrowerId, recipientId)
+    .first<{ n: number }>();
+  if ((pinned?.n ?? 0) > 0) {
+    return {
+      ok: false,
+      reason:
+        "The repayment schedule pays into this account. Point the schedule at another account first, or the borrower's repayments would stop.",
     };
   }
 

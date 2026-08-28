@@ -182,6 +182,16 @@ export async function createPendingConsent(
   return (await getConsent(db, id))!;
 }
 
+/**
+ * Record the mandate Plaid created for this row.
+ *
+ * Guarded on plaid_consent_id IS NULL: provisioning runs on every load of the
+ * setup page, and two overlapping loads can each create a mandate at Plaid
+ * before either has recorded one. The second write used to overwrite the first,
+ * which left a real, approvable mandate at the borrower's bank that we no longer
+ * held the id for. Whoever writes first wins; the loser reads the winner's id
+ * back and hands the borrower that one.
+ */
 export async function attachPlaidConsent(
   db: D1Database,
   id: string,
@@ -195,7 +205,8 @@ export async function attachPlaidConsent(
   await db
     .prepare(
       `UPDATE consents SET plaid_consent_id = ?, plaid_consent_id_hash = ?,
-         plaid_recipient_id = ?, raw_constraints = ? WHERE id = ?`,
+         plaid_recipient_id = ?, raw_constraints = ?
+       WHERE id = ? AND plaid_consent_id IS NULL`,
     )
     .bind(
       data.plaidConsentIdEncrypted,
@@ -319,14 +330,39 @@ export async function updateUnauthorisedConsentLimits(
     period: string;
     validTo?: string | null;
   },
-): Promise<boolean> {
+): Promise<{ updated: boolean; needsReapproval: boolean }> {
+  const before = await getConsent(db, consentId);
+  if (!before || before.status === "authorized") {
+    return { updated: false, needsReapproval: false };
+  }
+
+  const changed =
+    before.max_payment_amount_minor !== limits.maxPaymentAmountMinor ||
+    before.periodic_max_amount_minor !== limits.periodicMaxAmountMinor ||
+    before.period !== limits.period ||
+    (limits.validTo != null && before.valid_to !== limits.validTo);
+
+  // "Not authorised yet" was the wrong test for "still editable". Plaid creates
+  // the consent object at PROVISIONING, while the row is still pending, and its
+  // constraints are fixed there. Editing our copy afterwards left our caps
+  // disagreeing with the caps the borrower's bank actually holds, in whichever
+  // direction: we would refuse a payment the bank would have allowed, or submit
+  // one it then rejects, with no screen showing the two had diverged.
+  //
+  // So a genuine change to an already-provisioned mandate detaches it, and the
+  // next provisioning mints a fresh mandate carrying the new limits for the
+  // borrower to approve. What they approve is then what we hold.
+  const detach = changed && before.plaid_consent_id != null;
+
   const result = await db
     .prepare(
       `UPDATE consents
           SET max_payment_amount_minor = ?,
               periodic_max_amount_minor = ?,
               period = ?,
-              valid_to = COALESCE(?, valid_to)
+              valid_to = COALESCE(?, valid_to),
+              plaid_consent_id = CASE WHEN ? THEN NULL ELSE plaid_consent_id END,
+              plaid_consent_id_hash = CASE WHEN ? THEN NULL ELSE plaid_consent_id_hash END
         WHERE id = ? AND status <> 'authorized'`,
     )
     .bind(
@@ -334,8 +370,10 @@ export async function updateUnauthorisedConsentLimits(
       limits.periodicMaxAmountMinor,
       limits.period,
       limits.validTo ?? null,
+      detach ? 1 : 0,
+      detach ? 1 : 0,
       consentId,
     )
     .run();
-  return (result.meta.changes ?? 0) > 0;
+  return { updated: (result.meta.changes ?? 0) > 0, needsReapproval: detach };
 }
