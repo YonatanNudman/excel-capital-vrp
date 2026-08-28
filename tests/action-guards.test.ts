@@ -14,6 +14,10 @@ const ACTIONS_DIR = path.join(__dirname, "..", "src", "lib", "actions");
 const PUBLIC_ACTIONS: Record<string, string> = {
   completeSetupAction:
     "borrower-facing; authenticated by the single-use setup token, not by staff role",
+  recordSetupErrorAction:
+    "borrower-facing, like completeSetupAction: the caller is the borrower, who has " +
+    "no staff login. Authenticated by the setup token, grants nothing, and writes one " +
+    "audit row with bounded fields; an unrecognised token records nothing at all.",
   requestAccessAction:
     "must be callable by someone Cloudflare has authenticated who is NOT yet staff, " +
     "so requireRole would defeat its purpose. It still takes the email from the " +

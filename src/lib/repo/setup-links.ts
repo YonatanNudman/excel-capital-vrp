@@ -38,6 +38,26 @@ export async function getSetupLinkByHash(
     .first<SetupLink>();
 }
 
+/**
+ * Which borrower a setup token belongs to, whether or not the link is spent.
+ *
+ * Deliberately looser than getSetupLinkByHash, which excludes used links because
+ * a spent link must not grant another authorisation. This answers a different
+ * question: "whose failure is this". A borrower who fails, reopens the link and
+ * fails again should have both recorded, and a link marked used part-way through
+ * a multi-account setup still identifies its borrower. It grants nothing.
+ */
+export async function borrowerIdForSetupToken(
+  db: D1Database,
+  tokenHash: string,
+): Promise<string | null> {
+  const row = await db
+    .prepare("SELECT borrower_id FROM setup_links WHERE token_hash = ?")
+    .bind(tokenHash)
+    .first<{ borrower_id: string }>();
+  return row?.borrower_id ?? null;
+}
+
 export async function markSetupLinkUsed(db: D1Database, id: string): Promise<void> {
   await db
     .prepare("UPDATE setup_links SET used_at = ? WHERE id = ?")
