@@ -638,3 +638,58 @@ all Wrangler environments. Keep it false while applying migrations and running
 read-only checks. Set it to `true` only after the items above are complete, then
 deploy. Setting it back to `false` immediately blocks manual, scheduled, and
 retry execution while leaving webhook processing and reconciliation active.
+
+## Reading the borrower list: status vs "Borrower's side"
+
+Two different questions, two different columns. Reading one for the other is
+what made a borrower who was being collected from every week still show as
+"Onboarding".
+
+**Status** answers *can we take money from them*. `active` means at least one
+mandate is live at the bank. `paused` is the only thing that stops collections
+by operator decision; `revoked` and `expired` mean the bank no longer permits
+them. Note that `onboarding` does NOT stop a collection: the engine skips only
+paused, revoked and expired, so an onboarding borrower with a live mandate is
+collected from. That is why the status has to be kept honest.
+
+**Borrower's side** answers *have they finished everything their end*, across
+every payout account they were asked to approve:
+
+- `All approved` — nothing outstanding on their side.
+- `2 of 3 approved` / `1 to approve` — waiting on the borrower. Hover for which
+  account. They finish it by opening their setup link and approving with their
+  bank; issue a fresh link if the last one expired.
+- `Needs your input` — the borrower CANNOT act yet. An account is missing its
+  bank details or limits, or its mandate was revoked/expired and a new one must
+  be created. Chasing the borrower here achieves nothing; they would only meet
+  "Setup is temporarily unavailable".
+- `No account yet` — nothing has been added to send them.
+
+A borrower can be `active` and still show outstanding work: one approved account
+makes them collectable while a second is still waiting on them.
+
+### Adding another account to send funds to
+
+Borrower page → "Where repayments are sent" → **Add another bank account**.
+Each account carries its OWN mandate, because Plaid binds a mandate permanently
+to one recipient, so:
+
+1. Add the account with its own per-payment and per-period limits.
+2. Send the borrower a new setup link ("Setup link" on the borrower page). They
+   approve every outstanding account in one sitting with the same bank login.
+3. Once approved, pick it per collection, or "Make default" to send scheduled
+   collections there.
+
+The new account starts unapproved, so "Borrower's side" moves back to waiting on
+them until they approve it. Watch the combined-ceiling warning on that panel:
+two £600/month mandates mean the banks will together permit £1,200/month.
+
+### If a borrower is stuck on "Onboarding" while paying
+
+Fixed in the code as of migration `0009_backfill_active_borrowers.sql`; the
+status is now set on all three paths a mandate can be authorised (Link callback,
+Plaid webhook, and the setup page's own recheck against Plaid, which is the one
+that used to leave it behind). Apply the migration to each environment
+(`npm run db:migrate:staging`, `npm run db:migrate:prod`) to repair rows already
+written. It only moves `onboarding` rows that hold an authorised mandate;
+paused, revoked and expired rows are left alone.

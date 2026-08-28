@@ -1,5 +1,6 @@
 import { formatMinor } from "@/lib/money";
 import type { LoanProgress } from "@/lib/loan-progress";
+import type { SetupProgress } from "@/lib/setup-progress";
 import type { RepaymentSchedule, SetupLink } from "@/lib/types";
 
 /**
@@ -57,15 +58,18 @@ export function BorrowerSummary({
   schedule,
   progress,
   latestLink,
-  consentAuthorised,
+  setup,
 }: {
   schedule: RepaymentSchedule | null;
   progress: LoanProgress;
   latestLink: SetupLink | null;
-  consentAuthorised: boolean;
+  /** What the borrower still has to do, across every account they were sent. */
+  setup: SetupProgress;
 }) {
   const currency = schedule?.currency ?? "GBP";
   const linkState = setupLinkState(latestLink);
+  // At least one mandate is live, so money can move.
+  const consentAuthorised = setup.approved > 0;
 
   // Until the borrower has authorised, the next collection date is fiction.
   const nextRun =
@@ -120,32 +124,37 @@ export function BorrowerSummary({
       />
 
       <Stat
-        // Once the mandate exists, the link's own state is history and the label
-        // should describe what matters now.
-        label={consentAuthorised ? "Bank mandate" : linkState ? linkState.label : "Setup link"}
+        // The one stat that answers "has the client done everything their end".
+        // It used to read "Authorised" off a single mandate, which quietly became
+        // wrong once a borrower could hold several: one approved account showed
+        // the same green "Authorised" as a borrower who had approved every one,
+        // with a second account still waiting on them and nothing saying so.
+        //
+        // Once anything is approved the link's own state is history, EXCEPT while
+        // something is still outstanding, when whether a usable link is in their
+        // hands is precisely what an operator needs to know.
+        label="Borrower's side"
         value={
-          consentAuthorised
-            ? "Authorised"
-            : linkState
-              ? linkState.label === "Link expired"
-                ? "Expired"
-                : "Sent"
-              : "Not sent"
+          setup.complete
+            ? "All approved"
+            : setup.total === 0
+              ? "Nothing to do yet"
+              : setup.awaitingBorrower > 0
+                ? linkState?.label === "Link expired"
+                  ? "Link expired"
+                  : linkState
+                    ? "Waiting on them"
+                    : "Link not sent"
+                : "Waiting on you"
         }
         detail={
-          consentAuthorised
-            ? "Bank mandate is active"
+          setup.complete || setup.total === 0 || setup.awaitingBorrower === 0
+            ? setup.detail
             : linkState
-              ? linkState.detail
-              : "Generate a setup link to get started"
+              ? `${setup.detail} ${linkState.detail}.`
+              : `${setup.detail} No setup link has been sent yet.`
         }
-        tone={
-          consentAuthorised
-            ? "good"
-            : linkState?.label === "Link expired"
-              ? "warn"
-              : "normal"
-        }
+        tone={setup.complete ? "good" : setup.total === 0 ? "normal" : "warn"}
       />
     </div>
   );

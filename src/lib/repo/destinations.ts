@@ -28,9 +28,16 @@ export async function listDestinations(
       .all<Consent>(),
   ]);
 
-  const rows = recipients.results ?? [];
-  const allConsents = consents.results ?? [];
+  return assembleDestinations(recipients.results ?? [], consents.results ?? []);
+}
 
+/**
+ * Pair accounts with their mandates. Extracted so that the borrower list, which
+ * loads many borrowers at once, answers "has this borrower finished" from
+ * exactly the same rules as the borrower page rather than from a second SQL
+ * expression that has to be kept in step by hand.
+ */
+function assembleDestinations(rows: Recipient[], allConsents: Consent[]): Destination[] {
   const destinations: Destination[] = rows.map((recipient) => {
     // Prefer an authorised mandate for this account; otherwise its most recent.
     // Ordering by status first matters during re-consent, when a revoked mandate
@@ -54,6 +61,58 @@ export async function listDestinations(
   }
 
   return destinations;
+}
+
+/**
+ * Destinations for many borrowers at once, keyed by borrower id.
+ *
+ * Two queries in total rather than two per borrower: the list page shows every
+ * borrower, and a per-row lookup would turn one screen into dozens of round
+ * trips to D1. Ids are chunked because SQLite refuses a statement with more
+ * bound parameters than its variable limit, which a growing borrower list would
+ * eventually reach.
+ */
+export async function listDestinationsForBorrowers(
+  db: D1Database,
+  borrowerIds: string[],
+): Promise<Map<string, Destination[]>> {
+  const byBorrower = new Map<string, Destination[]>();
+  for (const id of borrowerIds) byBorrower.set(id, []);
+
+  const unique = [...new Set(borrowerIds)];
+  const CHUNK = 100;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const ids = unique.slice(i, i + CHUNK);
+    const placeholders = ids.map(() => "?").join(", ");
+    const [recipients, consents] = await Promise.all([
+      db
+        .prepare(
+          `SELECT * FROM recipients WHERE borrower_id IN (${placeholders})
+            ORDER BY is_default DESC, created_at ASC`,
+        )
+        .bind(...ids)
+        .all<Recipient>(),
+      db
+        .prepare(
+          `SELECT * FROM consents WHERE borrower_id IN (${placeholders})
+            ORDER BY created_at DESC`,
+        )
+        .bind(...ids)
+        .all<Consent>(),
+    ]);
+
+    for (const id of ids) {
+      byBorrower.set(
+        id,
+        assembleDestinations(
+          (recipients.results ?? []).filter((r) => r.borrower_id === id),
+          (consents.results ?? []).filter((c) => c.borrower_id === id),
+        ),
+      );
+    }
+  }
+
+  return byBorrower;
 }
 
 /**

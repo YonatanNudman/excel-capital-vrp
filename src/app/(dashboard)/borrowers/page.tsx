@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { getDb } from "@/lib/db";
 import { listBorrowers } from "@/lib/repo/borrowers";
+import { listDestinationsForBorrowers } from "@/lib/repo/destinations";
+import { setupProgress, type SetupProgress } from "@/lib/setup-progress";
 import { StatusBadge } from "@/components/status-badge";
 import type { BorrowerStatus } from "@/lib/types";
 
@@ -15,6 +17,27 @@ const STATUSES: (BorrowerStatus | "all")[] = [
   "expired",
 ];
 
+/**
+ * What the borrower still has to do, in one cell.
+ *
+ * Deliberately distinguishes "waiting on them" from "waiting on us": chasing a
+ * borrower about an account that is missing its own bank details here wastes
+ * everyone's time, because they cannot approve it however often they open the
+ * link.
+ */
+function SetupCell({ progress }: { progress: SetupProgress }) {
+  const tone = progress.complete
+    ? "text-emerald-700"
+    : progress.total === 0
+      ? "text-slate-400"
+      : "text-amber-700";
+  return (
+    <span className={`text-sm ${tone}`} title={progress.detail}>
+      {progress.label}
+    </span>
+  );
+}
+
 export default async function BorrowersPage({
   searchParams,
 }: {
@@ -23,7 +46,16 @@ export default async function BorrowersPage({
   const sp = await searchParams;
   const search = sp.q ?? "";
   const status = (sp.status as BorrowerStatus | "all") ?? "all";
-  const borrowers = await listBorrowers(getDb(), { search, status });
+  const db = getDb();
+  const borrowers = await listBorrowers(db, { search, status });
+  // "Has the client done everything their end" is not the same question as the
+  // status badge, which says only whether they can be collected from. A borrower
+  // can be active on one approved account while a second is still waiting on
+  // them, and that was visible nowhere outside one borrower's own page.
+  const destinations = await listDestinationsForBorrowers(
+    db,
+    borrowers.map((b) => b.id),
+  );
 
   return (
     <div>
@@ -74,12 +106,13 @@ export default async function BorrowersPage({
               <th className="px-4 py-2.5 font-medium">Company no.</th>
               <th className="px-4 py-2.5 font-medium">Contact</th>
               <th className="px-4 py-2.5 font-medium">Status</th>
+              <th className="px-4 py-2.5 font-medium">Borrower&apos;s side</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {borrowers.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-4 py-8 text-center text-slate-400">
+                <td colSpan={5} className="px-4 py-8 text-center text-slate-400">
                   No borrowers found.
                 </td>
               </tr>
@@ -95,6 +128,9 @@ export default async function BorrowersPage({
                 <td className="px-4 py-3 text-slate-600">{b.contact_email ?? "-"}</td>
                 <td className="px-4 py-3">
                   <StatusBadge status={b.status} />
+                </td>
+                <td className="px-4 py-3">
+                  <SetupCell progress={setupProgress(destinations.get(b.id) ?? [])} />
                 </td>
               </tr>
             ))}

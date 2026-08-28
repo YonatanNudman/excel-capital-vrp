@@ -12,6 +12,7 @@ import {
   pendingConsentsForBorrower,
 } from "@/lib/repo/consents";
 import { writeAudit } from "@/lib/repo/audit";
+import { activateBorrowerOnLiveMandate } from "@/lib/repo/borrowers";
 import { confirmConsent } from "@/lib/engine/setup";
 
 export type CompleteState = { done: boolean; message: string } | null;
@@ -94,6 +95,15 @@ export async function completeSetupAction(
     return { done: false, message: "Authorization is not complete. Please try again." };
   }
 
+  // Collectable the moment ONE account is approved, so the status stops
+  // disagreeing with what the engine will actually do: a borrower with an
+  // approved account is collected from whether or not a second account is still
+  // outstanding. "Has the borrower finished everything" is a different question,
+  // answered on screen by the setup progress rather than by this badge.
+  if (authorised.size > 0) {
+    await activateBorrowerOnLiveMandate(db, link.borrower_id);
+  }
+
   if (stillPending > 0) {
     // The link stays usable on purpose: it is the borrower's only way back to
     // approve the remaining accounts. Marking it used here would lock them out
@@ -107,13 +117,12 @@ export async function completeSetupAction(
     };
   }
 
-  // Every account approved: only now is the borrower collectable and the link spent.
-  await db.batch([
-    db.prepare("UPDATE borrowers SET status = 'active' WHERE id = ?").bind(link.borrower_id),
-    db
-      .prepare("UPDATE setup_links SET used_at = ? WHERE id = ? AND used_at IS NULL")
-      .bind(nowIso, link.id),
-  ]);
+  // Every account approved, so the link has done its job and is spent. The
+  // status was already moved above; a paused borrower stays paused.
+  await db
+    .prepare("UPDATE setup_links SET used_at = ? WHERE id = ? AND used_at IS NULL")
+    .bind(nowIso, link.id)
+    .run();
 
   return { done: true, message: "Authorisation successful. Thank you." };
 }
