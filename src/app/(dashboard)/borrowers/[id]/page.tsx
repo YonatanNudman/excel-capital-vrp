@@ -19,6 +19,7 @@ import {
 import { formatMinor } from "@/lib/money";
 import { destinationsReadiness } from "@/lib/readiness";
 import { setupProgress } from "@/lib/setup-progress";
+import { latestAuditEntry, SETUP_FAILED_ACTION } from "@/lib/repo/audit";
 import { loanProgress, paymentKind } from "@/lib/loan-progress";
 import { listDestinations } from "@/lib/repo/destinations";
 import { blockedReason, combinedCeiling, destinationLabel } from "@/lib/destinations";
@@ -55,6 +56,42 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+interface SetupFailure {
+  at: string;
+  errorCode: string | null;
+  errorMessage: string | null;
+  displayMessage: string | null;
+  institutionName: string | null;
+  linkSessionId: string | null;
+}
+
+/**
+ * Read the last failure out of its audit row.
+ *
+ * Tolerant on purpose: the metadata is JSON written by a borrower-facing path,
+ * and a malformed row must not take the borrower's whole page down with it. A
+ * failure that cannot be read is treated as no failure to report.
+ */
+function parseSetupFailure(entry: { metadata: string | null; created_at: string } | null): SetupFailure | null {
+  if (!entry?.metadata) return null;
+  let data: Record<string, unknown>;
+  try {
+    data = JSON.parse(entry.metadata) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const str = (key: string): string | null =>
+    typeof data[key] === "string" && data[key] ? (data[key] as string) : null;
+  return {
+    at: entry.created_at,
+    errorCode: str("errorCode"),
+    errorMessage: str("errorMessage"),
+    displayMessage: str("displayMessage"),
+    institutionName: str("institutionName"),
+    linkSessionId: str("linkSessionId"),
+  };
+}
+
 function scheduleSummary(s: RepaymentSchedule): string {
   // A daily schedule is stored as custom/1-day plus a weekday list, so describe
   // it as daily rather than as "every 1 days" (see migrations/0004).
@@ -86,7 +123,7 @@ export default async function BorrowerProfile({
   const borrower = await getBorrower(db, id);
   if (!borrower) notFound();
 
-  const [consent, schedule, payments, user, latestLink, destinations] =
+  const [consent, schedule, payments, user, latestLink, destinations, lastSetupFailure] =
     await Promise.all([
       getActiveConsent(db, id),
       getActiveSchedule(db, id),
@@ -94,6 +131,7 @@ export default async function BorrowerProfile({
       getCurrentUser(),
       latestSetupLinkForBorrower(db, id),
       listDestinations(db, id),
+      latestAuditEntry(db, SETUP_FAILED_ACTION, "borrower", id),
     ]);
   const progress = loanProgress({
     schedule,
@@ -109,6 +147,11 @@ export default async function BorrowerProfile({
   // Whether the borrower still owes us anything, across every account rather
   // than the one primary mandate the summary used to read.
   const setup = setupProgress(destinations);
+
+  // What the bank actually said, the last time this borrower could not finish.
+  // Kept as the provider's own words rather than a paraphrase, because the point
+  // of showing it is to stop anyone theorising about a screenshot.
+  const failure = parseSetupFailure(lastSetupFailure);
   const env = getEnv();
   // Decrypt and mask every destination here, on the server. The panel and the
   // picker are client components, so they must never receive account numbers.
@@ -182,6 +225,42 @@ export default async function BorrowerProfile({
         latestLink={latestLink}
         setup={setup}
       />
+
+      {canOperate && failure && (
+        <div className="mb-6 rounded-lg border border-red-300 bg-red-50 p-4">
+          <h2 className="text-sm font-semibold text-red-900">
+            The borrower&apos;s last attempt to connect their bank failed
+          </h2>
+          <p className="mt-1 text-sm text-red-900">
+            {failure.displayMessage ?? failure.errorMessage ?? "The bank gave no reason."}
+          </p>
+          <dl className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1 text-xs text-red-900 sm:grid-cols-2">
+            {failure.institutionName && (
+              <div>
+                <dt className="inline font-medium">Bank: </dt>
+                <dd className="inline">{failure.institutionName}</dd>
+              </div>
+            )}
+            {failure.errorCode && (
+              <div>
+                <dt className="inline font-medium">Error code: </dt>
+                <dd className="inline font-mono">{failure.errorCode}</dd>
+              </div>
+            )}
+            <div>
+              <dt className="inline font-medium">When: </dt>
+              <dd className="inline">{failure.at.replace("T", " ").slice(0, 16)}</dd>
+            </div>
+            {failure.linkSessionId && (
+              // The one identifier Plaid support ask for first.
+              <div>
+                <dt className="inline font-medium">Plaid session: </dt>
+                <dd className="inline font-mono">{failure.linkSessionId}</dd>
+              </div>
+            )}
+          </dl>
+        </div>
+      )}
 
       {canOperate && readiness.ready && setup.awaitingBorrower > 0 && (
         // Named here as well as in the summary tile, because this is the state

@@ -2,6 +2,7 @@
 
 import { useActionState, useCallback, useState } from "react";
 import { completeSetupAction, type CompleteState } from "@/lib/actions/setup-complete";
+import { recordSetupErrorAction } from "@/lib/actions/setup-error";
 
 /**
  * Plaid calls onExit with (error, metadata). The previous declaration here was
@@ -10,8 +11,21 @@ import { completeSetupAction, type CompleteState } from "@/lib/actions/setup-com
  */
 interface PlaidError {
   error_code?: string;
+  error_type?: string;
   error_message?: string;
   display_message?: string;
+}
+
+/**
+ * What Plaid hands back alongside the error. The institution and link_session_id
+ * are the two things nobody can reconstruct afterwards: a screenshot of an error
+ * box shows neither, and Plaid support ask for the session id first.
+ */
+interface PlaidMetadata {
+  institution?: { name?: string; institution_id?: string } | null;
+  link_session_id?: string;
+  request_id?: string;
+  status?: string;
 }
 
 declare global {
@@ -20,7 +34,7 @@ declare global {
       create(config: {
         token: string;
         onSuccess: () => void;
-        onExit?: (err: PlaidError | null, metadata?: unknown) => void;
+        onExit?: (err: PlaidError | null, metadata?: PlaidMetadata) => void;
         onEvent?: (eventName: string, metadata?: unknown) => void;
         receivedRedirectUri?: string;
       }): { open: () => void };
@@ -71,6 +85,39 @@ export function SetupLauncher({
         setLaunching(false);
       };
 
+      /**
+       * Send the provider's own account of the failure back to us.
+       *
+       * The console line above helps precisely nobody: it is on the borrower's
+       * phone. Recording it against the borrower is the difference between
+       * reading the error code and guessing from a screenshot someone took of
+       * an error box. Deliberately fire-and-forget with its own catch, because
+       * failing to report a failure must not become a second failure the
+       * borrower sees.
+       */
+      const report = (err: PlaidError | null, metadata?: PlaidMetadata) => {
+        try {
+          const payload = new FormData();
+          payload.set("token", token);
+          if (err?.error_code) payload.set("errorCode", err.error_code);
+          if (err?.error_type) payload.set("errorType", err.error_type);
+          if (err?.error_message) payload.set("errorMessage", err.error_message);
+          if (err?.display_message) payload.set("displayMessage", err.display_message);
+          if (metadata?.institution?.name) {
+            payload.set("institutionName", metadata.institution.name);
+          }
+          if (metadata?.institution?.institution_id) {
+            payload.set("institutionId", metadata.institution.institution_id);
+          }
+          if (metadata?.link_session_id) payload.set("linkSessionId", metadata.link_session_id);
+          if (metadata?.request_id) payload.set("requestId", metadata.request_id);
+          if (metadata?.status) payload.set("status", metadata.status);
+          void recordSetupErrorAction(payload).catch(() => {});
+        } catch {
+          // Reporting is best effort by design.
+        }
+      };
+
       // Banks take the borrower away to their own site and send them back to
       // /setup/complete. Link can only be resumed there if it is given the SAME
       // link token, and that page has no other way to know it, so stash it now.
@@ -86,6 +133,7 @@ export function SetupLauncher({
 
       const start = () => {
         if (!window.Plaid) {
+          report({ error_code: "PLAID_SCRIPT_UNAVAILABLE" });
           failed(
             "Your bank connection could not start. Please check your internet connection and try again.",
           );
@@ -95,9 +143,10 @@ export function SetupLauncher({
           const handler = window.Plaid.create({
             token: linkToken,
             onSuccess: () => submit(),
-            onExit: (err) => {
+            onExit: (err, metadata) => {
               setLaunching(false);
               if (!err) return; // The borrower simply closed it; not a failure.
+              report(err, metadata);
               failed(
                 err.display_message ||
                   err.error_message ||
@@ -133,10 +182,12 @@ export function SetupLauncher({
       // Without this, a blocked or failed script left the button stuck on
       // "Opening Plaid…" forever with no explanation. Ad and tracker blockers do
       // block this CDN, which is a very ordinary thing for a phone to be doing.
-      s.onerror = () =>
+      s.onerror = () => {
+        report({ error_code: "PLAID_SCRIPT_BLOCKED" });
         failed(
           "Your bank connection could not load. If you use an ad blocker or private browsing, try again in a normal browser window.",
         );
+      };
       document.body.appendChild(s);
     },
     [linkToken, token],
