@@ -244,6 +244,7 @@ export async function runDueCollectionsFromEnv(
     collectionsEnabled: boolean;
     consentExpired: number;
     consentRevokedAtBank: number;
+    consentAuthorisedAtBank: number;
     consentExpiringSoon: number;
     autoRetried: number;
     autoRetryFailed: number;
@@ -313,6 +314,7 @@ export async function runDueCollectionsFromEnv(
     }),
     consentExpired: maintenance?.expired ?? 0,
     consentRevokedAtBank: maintenance?.revokedAtBank ?? 0,
+    consentAuthorisedAtBank: maintenance?.authorisedAtBank ?? 0,
     consentExpiringSoon: maintenance?.expiringSoon ?? 0,
     autoRetried: retries?.retried ?? 0,
     autoRetryFailed: retries?.failed ?? 0,

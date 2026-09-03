@@ -2,11 +2,16 @@ import {
   authorisedConsents,
   overdueConsents,
   consentsExpiringSoon,
+  pendingConsentsToRecheck,
   setConsentStatus,
 } from "@/lib/repo/consents";
 import type { PlaidClient } from "@/lib/plaid";
 import { confirmConsent } from "@/lib/engine/setup";
-import { getBorrower, syncBorrowerStatusToMandates } from "@/lib/repo/borrowers";
+import {
+  activateBorrowerOnLiveMandate,
+  getBorrower,
+  syncBorrowerStatusToMandates,
+} from "@/lib/repo/borrowers";
 import { writeAudit, listAudit } from "@/lib/repo/audit";
 import type { Mailer } from "@/lib/mailer";
 import { reconsentEmail } from "@/lib/mailer/templates";
@@ -30,6 +35,8 @@ export interface ConsentMaintenanceSummary {
   revokedAtBank: number;
   /** Mandates the bank described in words we do not recognise. Needs a human. */
   unknownStatus: number;
+  /** Mandates the bank had made live while we still showed them as unapproved. */
+  authorisedAtBank: number;
 }
 
 const EXPIRING_SOON_DAYS = 7;
@@ -180,5 +187,84 @@ export async function runConsentMaintenance(
     }
   }
 
-  return { expired: overdue.length, expiringSoon: soon.length, revokedAtBank, unknownStatus };
+  // The mirror image of the check above: mandates the bank made live without us
+  // hearing about it. See reconcileAuthorisedAtBank for why this is not optional.
+  const authorisedAtBank =
+    plaid && encryptionKey
+      ? await reconcileAuthorisedAtBank(db, plaid, encryptionKey, nowIso)
+      : 0;
+
+  return {
+    expired: overdue.length,
+    expiringSoon: soon.length,
+    revokedAtBank,
+    unknownStatus,
+    authorisedAtBank,
+  };
+}
+
+/**
+ * Ask Plaid whether any mandate we show as unapproved is in fact live.
+ *
+ * Three separate things were supposed to tell us a borrower had approved: Link's
+ * success callback, the consent webhook, and a re-check when the borrower reloads
+ * their setup page. All three depend on something outside our control happening
+ * at the right moment, and the first one has already been observed to fail in
+ * production against a real bank: the borrower approved, the return redirect did
+ * not complete, and the mandate existed at the bank while every screen here said
+ * "not approved yet".
+ *
+ * The consequence is not cosmetic. That borrower is never collected from, staff
+ * chase an authorisation the borrower has already given, and the discrepancy
+ * grows quietly for as long as nobody reloads the right page. Asking Plaid every
+ * night is the only check that does not depend on someone being present.
+ *
+ * Deliberately one-directional: it only ever promotes pending to authorised. A
+ * mandate that is still genuinely pending, or a Plaid call that fails, is left
+ * exactly as it was for tomorrow.
+ */
+async function reconcileAuthorisedAtBank(
+  db: D1Database,
+  plaid: PlaidClient,
+  encryptionKey: string,
+  nowIso: string,
+): Promise<number> {
+  let found = 0;
+  for (const consent of await pendingConsentsToRecheck(db)) {
+    let status: string;
+    try {
+      ({ status } = await confirmConsent(plaid, encryptionKey, consent));
+    } catch (error) {
+      // A provider blip leaves the mandate pending, which is what we already
+      // believed. Nothing to undo; ask again tomorrow.
+      console.error("could not re-check pending consent with Plaid", consent.id, error);
+      continue;
+    }
+    if (status !== "AUTHORISED" && status !== "AUTHORIZED") continue;
+
+    // Guarded on status so a webhook that lands mid-sweep cannot be overwritten.
+    const updated = await db
+      .prepare(
+        "UPDATE consents SET status = 'authorized', authorized_at = ? WHERE id = ? AND status = 'pending'",
+      )
+      .bind(nowIso, consent.id)
+      .run();
+    if ((updated.meta.changes ?? 0) === 0) continue;
+
+    await activateBorrowerOnLiveMandate(db, consent.borrower_id);
+    await writeAudit(db, {
+      actorStaffId: null,
+      action: "consent.authorized",
+      entityType: "borrower",
+      entityId: consent.borrower_id,
+      metadata: {
+        consentId: consent.id,
+        recipientId: consent.recipient_id,
+        providerStatus: status,
+        via: "nightly_recheck",
+      },
+    });
+    found++;
+  }
+  return found;
 }
