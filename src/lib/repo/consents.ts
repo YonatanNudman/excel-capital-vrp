@@ -377,3 +377,28 @@ export async function updateUnauthorisedConsentLimits(
     .run();
   return { updated: (result.meta.changes ?? 0) > 0, needsReapproval: detach };
 }
+
+/**
+ * Unapproved mandates that Plaid has actually been told about, oldest first.
+ *
+ * The counterpart to authorisedConsents, and it exists for the same reason: a
+ * mandate's real state lives at the bank, not here. Until this ran, a pending
+ * mandate was only ever re-checked when the borrower happened to reload their
+ * setup page. A borrower who approved at their bank and then closed the tab
+ * (exactly what happens when the return redirect fails) left a live mandate
+ * that this system never learned about, showing "not approved yet" forever
+ * while their bank stood ready to pay.
+ *
+ * Only rows with a plaid_consent_id are returned: without one there is nothing
+ * to ask Plaid about, and those rows are abandoned setup attempts.
+ */
+export async function pendingConsentsToRecheck(db: D1Database): Promise<Consent[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT * FROM consents
+        WHERE status = 'pending' AND plaid_consent_id IS NOT NULL
+        ORDER BY created_at ASC LIMIT 200`,
+    )
+    .all<Consent>();
+  return results ?? [];
+}

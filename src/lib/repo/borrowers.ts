@@ -298,3 +298,4 @@ export async function syncBorrowerStatusToMandates(
     await setBorrowerStatus(db, borrowerId, whenNoneLeft);
   }
 }
+
